@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+dist-ssr/
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# tauri (added later)
+src-tauri/target/
