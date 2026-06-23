@@ -73,7 +73,9 @@ export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }:
 
       {(obj.type === 'cube' || obj.type === 'sphere' || obj.type === 'capsule') && (
         <mesh castShadow receiveShadow>
-          {obj.type === 'cube' && <boxGeometry args={[obj.size, obj.size, obj.size]} />}
+          {obj.type === 'cube' && (
+            <boxGeometry args={[obj.dimensions[0], obj.dimensions[1], obj.dimensions[2]]} />
+          )}
           {obj.type === 'sphere' && <sphereGeometry args={[obj.radius, 32, 32]} />}
           {obj.type === 'capsule' && (
             <capsuleGeometry args={[obj.radius * 0.5, obj.size, 12, 24]} />

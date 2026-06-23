@@ -62,8 +62,9 @@ def _build_geom(body: ET.Element, obj: dict) -> None:
     friction = f"{_f(obj.get('friction', 0.5))} 0.01 0.01"
 
     if t == "cube":
-        h = obj.get("size", 1) / 2.0
-        geom = ET.SubElement(body, "geom", {"type": "box", "size": _v3([h, h, h])})
+        dims = obj.get("dimensions", [1, 1, 1])
+        w, h, d = dims[0] / 2.0, dims[1] / 2.0, dims[2] / 2.0
+        geom = ET.SubElement(body, "geom", {"type": "box", "size": _v3([w, h, d])})
     elif t == "sphere":
         geom = ET.SubElement(body, "geom", {"type": "sphere", "size": _f(obj.get("radius", 0.5))})
     elif t == "capsule":
@@ -134,7 +135,12 @@ def build_mjcf(scene: dict, lift_agent: bool = True) -> str:
 
     for obj in scene.get("objects", []):
         oid = obj["id"]
-        role = obj.get("role", "static")
+        role = obj.get("role", "prop")
+        # An object is dynamic (freejoint + mass, falls under gravity) when it's
+        # the agent OR an unpinned prop. Targets, floors, and pinned props stay
+        # welded to the world.
+        dynamic = role == "agent" or (role == "prop" and not obj.get("pinned", False))
+
         pos = list(obj.get("position", [0, 0.5, 0]))
         if role == "agent" and lift_agent:
             # Lift the agent a little so every Run shows a visible drop.
@@ -148,12 +154,12 @@ def build_mjcf(scene: dict, lift_agent: bool = True) -> str:
             body_attrs["quat"] = f"{_f(w)} {_f(x)} {_f(y)} {_f(z)}"
 
         body = ET.SubElement(world, "body", body_attrs)
-        if role == "agent":
+        if dynamic:
             ET.SubElement(body, "freejoint", {"name": f"j_{oid}"})
         _build_geom(body, obj)
 
-        # Dynamic bodies carry their mass; welded (static) bodies inherit world.
-        if role == "agent":
+        # Dynamic bodies carry their mass; welded bodies inherit the world.
+        if dynamic:
             for geom in body.findall("geom"):
                 geom.set("mass", _f(max(obj.get("weight", 1), 0.05)))
 

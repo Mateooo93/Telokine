@@ -1,5 +1,5 @@
 import { useSceneStore } from '../store/useSceneStore'
-import { TYPE_LABEL, type SceneObject, type Vec3 } from '../viewport/types'
+import { ROLE_LABEL, TYPE_LABEL, type SceneObject, type Vec3 } from '../viewport/types'
 
 const RAD2DEG = 180 / Math.PI
 const DEG2RAD = Math.PI / 180
@@ -32,7 +32,7 @@ export function Inspector() {
       <div className="obj-title">
         <span className="swatch" style={{ background: obj.color }} />
         <b>{TYPE_LABEL[obj.type]}</b>
-        <span className="role">{obj.role}</span>
+        <span className="role">{ROLE_LABEL[obj.role]}</span>
       </div>
 
       <Section title="Transform">
@@ -64,7 +64,32 @@ export function Inspector() {
       </Section>
 
       <Section title="Shape">
-        {(obj.type === 'cube' || obj.type === 'capsule' || obj.type === 'floor') && (
+        {obj.type === 'cube' && (
+          <>
+            <NumField
+              label="Width"
+              value={obj.dimensions[0]}
+              step={0.1}
+              min={0.1}
+              onValue={(v) => updateObject(obj.id, { dimensions: [Math.max(0.1, v), obj.dimensions[1], obj.dimensions[2]] })}
+            />
+            <NumField
+              label="Height"
+              value={obj.dimensions[1]}
+              step={0.1}
+              min={0.1}
+              onValue={(v) => updateObject(obj.id, { dimensions: [obj.dimensions[0], Math.max(0.1, v), obj.dimensions[2]] })}
+            />
+            <NumField
+              label="Depth"
+              value={obj.dimensions[2]}
+              step={0.1}
+              min={0.1}
+              onValue={(v) => updateObject(obj.id, { dimensions: [obj.dimensions[0], obj.dimensions[1], Math.max(0.1, v)] })}
+            />
+          </>
+        )}
+        {(obj.type === 'capsule' || obj.type === 'floor') && (
           <NumField
             label="Size"
             value={obj.size}
@@ -85,10 +110,20 @@ export function Inspector() {
       </Section>
 
       <Section title="Physics">
+        {obj.role === 'prop' && (
+          <label className="field">
+            <span>Pinned in place</span>
+            <input
+              type="checkbox"
+              checked={obj.pinned}
+              onChange={(e) => updateObject(obj.id, { pinned: e.target.checked })}
+            />
+          </label>
+        )}
         {(obj.type === 'cube' || obj.type === 'sphere' || obj.type === 'capsule') && (
           <SliderField label="Weight" value={obj.weight} min={0.1} max={5} step={0.1} onValue={(v) => updateObject(obj.id, { weight: v })} />
         )}
-        {(obj.type !== 'target') && (
+        {obj.type !== 'target' && (
           <SliderField label="Friction" value={obj.friction} min={0} max={1.5} step={0.05} onValue={(v) => updateObject(obj.id, { friction: v })} />
         )}
       </Section>

@@ -118,3 +118,107 @@ def test_edited_rotation_becomes_body_quat():
     assert abs(w - math.sqrt(0.5)) < 1e-6
     assert abs(x - math.sqrt(0.5)) < 1e-6
     assert abs(y) < 1e-6 and abs(z) < 1e-6
+
+
+def test_rectangle_cube_dimensions():
+    from telokine.sim import build_mjcf
+
+    cube = _cube()
+    cube["dimensions"] = [2.0, 0.5, 3.0]  # wide, flat, deep
+    xml = build_mjcf({"objects": [cube]}, lift_agent=False)
+    # half-sizes are 1.0 0.25 1.5
+    assert 'type="box"' in xml
+    assert 'size="1 0.25 1.5"' in xml
+
+
+def test_unpinned_prop_is_dynamic():
+    from telokine.sim import build_mjcf
+
+    sphere = {
+        "id": "ball",
+        "type": "sphere",
+        "position": [0, 1, 0],
+        "rotation": [0, 0, 0],
+        "dimensions": [1, 1, 1],
+        "size": 1,
+        "radius": 0.5,
+        "weight": 1,
+        "friction": 0.5,
+        "pinned": False,
+        "role": "prop",
+        "color": "#b07cff",
+    }
+    xml = build_mjcf({"objects": [sphere]}, lift_agent=False)
+    assert 'name="j_ball"' in xml  # freejoint -> falls under gravity
+    assert 'mass="1"' in xml
+
+
+def test_pinned_prop_is_welded():
+    from telokine.sim import build_mjcf
+
+    box = {
+        "id": "plat",
+        "type": "cube",
+        "position": [0, 0, 0],
+        "rotation": [0, 0, 0],
+        "dimensions": [4, 0.5, 4],
+        "size": 1,
+        "radius": 0.5,
+        "weight": 1,
+        "friction": 0.5,
+        "pinned": True,
+        "role": "prop",
+        "color": "#888",
+    }
+    xml = build_mjcf({"objects": [box]}, lift_agent=False)
+    assert 'name="j_plat"' not in xml  # no freejoint -> stays put
+
+
+def test_pinned_platform_holds_up_falling_sphere():
+    # A pinned cube platform should catch a falling sphere instead of the
+    # sphere passing through — confirms pinned props still collide.
+    import mujoco
+    from telokine.sim import build_mjcf
+
+    scene = {
+        "objects": [
+            {
+                "id": "plat",
+                "type": "cube",
+                "position": [0, 0, 0],
+                "rotation": [0, 0, 0],
+                "dimensions": [4, 0.5, 4],
+                "size": 1,
+                "radius": 0.5,
+                "weight": 1,
+                "friction": 0.5,
+                "pinned": True,
+                "role": "prop",
+                "color": "#888",
+            },
+            {
+                "id": "ball",
+                "type": "sphere",
+                "position": [0, 3, 0],
+                "rotation": [0, 0, 0],
+                "dimensions": [1, 1, 1],
+                "size": 1,
+                "radius": 0.5,
+                "weight": 1,
+                "friction": 0.5,
+                "pinned": False,
+                "role": "prop",
+                "color": "#b07cff",
+            },
+        ]
+    }
+    xml = build_mjcf(scene, lift_agent=False)
+    m = mujoco.MjModel.from_xml_string(xml)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    y0 = float(d.body("b_ball").xpos[1])
+    for _ in range(600):
+        mujoco.mj_step(m, d)
+    y1 = float(d.body("b_ball").xpos[1])
+    assert y1 < y0  # fell
+    assert y1 > 0.6  # but came to rest on the platform (top at y=0.25+radius)
