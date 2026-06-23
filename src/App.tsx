@@ -2,6 +2,7 @@ import { Palette } from './components/Palette'
 import { StatusBar } from './components/StatusBar'
 import { TopBar } from './components/TopBar'
 import { Inspector } from './components/Inspector'
+import { TrainingOverlay } from './components/TrainingOverlay'
 import { Viewport } from './viewport/Viewport'
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
         <div className="viewport">
           <Viewport />
           <StatusBar />
+          <TrainingOverlay />
         </div>
         <Inspector />
       </div>

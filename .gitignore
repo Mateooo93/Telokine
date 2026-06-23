@@ -13,6 +13,9 @@ __pycache__/
 *.egg-info/
 build/
 
+# generated training artifacts
+backend/policies/
+
 # editor / os
 .DS_Store
 .vscode/

@@ -8,5 +8,8 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Poll instead of inotify: the host's IDE (Cursor) already consumes most
+    // inotify watchers, which would crash Vite's HMR watcher with ENOSPC.
+    watch: { usePolling: true, interval: 1000 },
   },
 })

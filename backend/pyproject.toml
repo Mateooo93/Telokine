@@ -23,16 +23,24 @@ sim = [
 ]
 
 # Full learning stack — installed from step 4 (RL with PPO).
+# torch is pinned to a stable CUDA 12.x build and fetched from PyTorch's own
+# index (see [tool.uv] below), which serves the large CUDA wheels more
+# reliably than PyPI.
 ml = [
     "mujoco>=3.1",
     "gymnasium>=1.0",
     "stable-baselines3>=2.3",
-    "torch>=2.2",
+    "torch>=2.4,<2.6",
 ]
 
 # Dev/test tools.
 [dependency-groups]
 dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.uv]
+# PyTorch CUDA 12.1 wheels (manylinux). uv will fall back to a CPU build if no
+# CUDA-capable build resolves for this platform.
+extra-index-url = ["https://download.pytorch.org/whl/cu121"]
 
 [build-system]
 requires = ["hatchling"]

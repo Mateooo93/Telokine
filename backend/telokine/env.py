@@ -110,10 +110,36 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
         except Exception:  # pragma: no cover
             pass
         mujoco.mj_resetData(self.model, self.data)
+
+        # Domain randomization: jitter the agent's start xz a little so the
+        # parallel training envs see variety (each carries its own rng). The
+        # target stays where the user placed it. Deterministic for a given seed,
+        # so unit tests stay reproducible.
+        qposadr = int(
+            self.model.jnt_qposadr[
+                mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, f"j_{self._agent_id}"
+                )
+            ]
+        )
+        self.data.qpos[qposadr + 0] += float(self._np_rng.uniform(-0.4, 0.4))
+        self.data.qpos[qposadr + 2] += float(self._np_rng.uniform(-0.4, 0.4))
+
         mujoco.mj_forward(self.model, self.data)
         self._step = 0
         self._prev_dist = self._dist_to_target()
         return self._obs(), {}
+
+    def frame(self) -> list[dict]:
+        """Per-object transforms for the frontend, same shape as Simulator."""
+        objs = []
+        for o in self.scene.get("objects", []):
+            oid = o["id"]
+            body = self.data.body(f"b_{oid}")
+            x, y, z = (float(v) for v in body.xpos)
+            qw, qx, qy, qz = (float(v) for v in body.xquat)
+            objs.append({"id": oid, "pos": [x, y, z], "rot": [qx, qy, qz, qw]})
+        return objs
 
     def step(self, action):
         action = np.clip(np.asarray(action, dtype=np.float64).reshape(-1), -1.0, 1.0)

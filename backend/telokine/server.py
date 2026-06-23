@@ -5,18 +5,22 @@ Run (dev):
 
 Channels:
     GET  /health        -> liveness check
-    WS   /ws/sim        -> live physics rollout (step 2)
-    WS   /ws/train      -> training control + telemetry (steps 4-6)
+    WS   /ws/sim        -> live physics rollout, or a trained-policy rollout
+    WS   /ws/train      -> training control + telemetry stream
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
+import uuid
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Telokine Backend", version="0.1.0")
 
@@ -35,30 +39,50 @@ def health() -> dict[str, Any]:
     return {"status": "ok", "service": "telokine-backend", "version": "0.1.0"}
 
 
-# --------------------------------------------------------------------------
-# /ws/sim — live physics rollout (step 2)
-# --------------------------------------------------------------------------
-#
-# Protocol:
-#   inbound  -> {"type":"start","scene":{...},"seed":?,"max_steps":?}
-#               {"type":"stop"}
-#   outbound -> {"type":"started"}
-#               {"type":"frame","objects":[{"id","pos":[x,y,z],"rot":[x,y,z,w]}]}
-#               {"type":"stopped"}
-#               {"type":"error","message":...}
-#
-# A rollout streams frames at ~60fps in real time and auto-stops once the agent
-# settles (low speed for a while) or max_steps is reached.
+@app.get("/policies/{name}")
+def policy_exists(name: str) -> dict[str, Any]:
+    """Report whether a trained policy file is available on disk."""
+    path = os.path.join("policies", f"{name}.zip")
+    return {"name": name, "exists": os.path.exists(path)}
 
-TARGET_FRAME_DT = 0.016  # seconds of wall-clock between streamed frames (~60fps)
+
+# --------------------------------------------------------------------------
+# Built frontend (single-process serving: API + websocket + SPA on one origin).
+# If the frontend has been built (../dist), serve it from here so the user only
+# needs one server. Routes below must come BEFORE the catch-all at the bottom.
+# --------------------------------------------------------------------------
+_FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "dist"))
+if os.path.isdir(os.path.join(_FRONTEND_DIR, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_FRONTEND_DIR, "assets")), name="assets")
+
+
+# --------------------------------------------------------------------------
+# Shared: pump messages produced by a worker thread onto the websocket.
+# --------------------------------------------------------------------------
+async def _pump(ws: WebSocket, outbox: asyncio.Queue) -> None:
+    """Forward queued messages to the client until a None sentinel arrives."""
+    while True:
+        msg = await outbox.get()
+        if msg is None:
+            return
+        await ws.send_json(msg)
+
+
+# --------------------------------------------------------------------------
+# /ws/sim — live physics rollout (step 2) OR trained-policy rollout (step 4)
+# --------------------------------------------------------------------------
+#
+# start message:
+#   {"type":"start","scene":{...},"seed":?,"max_steps":?,"policy":?<name>}
+# When "policy" is given, a trained SB3 policy drives the agent instead of it
+# free-falling. Used by the Run button after a Train completes.
+
+TARGET_FRAME_DT = 0.016  # ~60fps for the free-physics rollout
 
 
 async def _run_rollout(ws: WebSocket, sim: Any, stop: dict[str, bool], max_steps: int) -> None:
-    """Step the simulator and stream frames until stopped, settled, or max_steps."""
     try:
-        # Initial frame so the user sees the agent at its (lifted) start pose.
         await ws.send_json(sim.frame().to_dict())
-
         settled = 0
         last = time.monotonic()
         for _ in range(max_steps):
@@ -66,15 +90,12 @@ async def _run_rollout(ws: WebSocket, sim: Any, stop: dict[str, bool], max_steps
                 break
             sim.step()
             await ws.send_json(sim.frame().to_dict())
-
             if sim.agent_speed() < 0.05:
                 settled += 1
                 if settled > 30:
-                    break  # the cube has come to rest
+                    break
             else:
                 settled = 0
-
-            # Pace to real time so the drop looks physical, not instant.
             elapsed = time.monotonic() - last
             last = time.monotonic()
             if elapsed < TARGET_FRAME_DT:
@@ -83,10 +104,37 @@ async def _run_rollout(ws: WebSocket, sim: Any, stop: dict[str, bool], max_steps
         await ws.send_json({"type": "stopped"})
 
 
+def _run_policy_rollout(
+    scene: dict, policy_name: str, outbox: asyncio.Queue, loop: asyncio.AbstractEventLoop,
+    stop: dict[str, bool],
+) -> None:
+    """Worker thread: drive a trained policy and enqueue frames."""
+    from telokine.train import rollout_policy
+
+    def emit(msg: dict) -> None:
+        loop.call_soon_threadsafe(outbox.put_nowait, msg)
+
+    try:
+        path = os.path.join("policies", f"{policy_name}.zip")
+        rollout_policy(
+            scene=scene,
+            model_path=path,
+            on_frame=emit,
+            should_stop=lambda: stop["stop"],
+            max_steps=400,
+        )
+    except Exception as exc:  # noqa: BLE001
+        emit({"type": "error", "message": str(exc)})
+    finally:
+        emit({"type": "stopped"})
+
+
 @app.websocket("/ws/sim")
 async def sim_ws(ws: WebSocket) -> None:
     await ws.accept()
     run_task: asyncio.Task | None = None
+    pump_task: asyncio.Task | None = None
+    outbox: asyncio.Queue = asyncio.Queue()
     stop: dict[str, bool] = {"stop": False}
 
     try:
@@ -101,45 +149,102 @@ async def sim_ws(ws: WebSocket) -> None:
             kind = msg.get("type")
 
             if kind == "start":
-                # Tear down any in-flight rollout first.
+                # Tear down anything in flight.
+                stop["stop"] = True
                 if run_task and not run_task.done():
-                    stop["stop"] = True
                     await run_task
+                if pump_task and not pump_task.done():
+                    await outbox.put(None)
+                    await pump_task
 
-                try:
-                    from telokine.sim import Simulator
-
-                    sim = Simulator(
-                        msg.get("scene", {}),
-                        seed=msg.get("seed"),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    await ws.send_json({"type": "error", "message": str(exc)})
-                    continue
-
-                await ws.send_json({"type": "started"})
                 stop = {"stop": False}
-                run_task = asyncio.create_task(
-                    _run_rollout(ws, sim, stop, int(msg.get("max_steps", 1500)))
-                )
+                outbox = asyncio.Queue()
+                pump_task = asyncio.create_task(_pump(ws, outbox))
+
+                scene = msg.get("scene", {})
+                policy = msg.get("policy")
+
+                if policy:
+                    await ws.send_json({"type": "started", "mode": "policy", "policy": policy})
+                    run_task = asyncio.create_task(
+                        asyncio.to_thread(
+                            _run_policy_rollout, scene, policy, outbox,
+                            asyncio.get_running_loop(), stop,
+                        )
+                    )
+                else:
+                    try:
+                        from telokine.sim import Simulator
+                        sim = Simulator(scene, seed=msg.get("seed"))
+                    except Exception as exc:  # noqa: BLE001
+                        await ws.send_json({"type": "error", "message": str(exc)})
+                        continue
+                    await ws.send_json({"type": "started", "mode": "physics"})
+                    run_task = asyncio.create_task(
+                        _run_rollout(ws, sim, stop, int(msg.get("max_steps", 1500)))
+                    )
 
             elif kind == "stop":
                 stop["stop"] = True
                 if run_task and not run_task.done():
                     await run_task
-                # _run_rollout already emitted "stopped".
+                if pump_task and not pump_task.done():
+                    await outbox.put(None)
+                    await pump_task
+                pump_task = None
 
     except WebSocketDisconnect:
+        stop["stop"] = True
         if run_task and not run_task.done():
             run_task.cancel()
 
 
 # --------------------------------------------------------------------------
-# /ws/train — training channel (skeleton for steps 4-6)
+# /ws/train — PPO training with live telemetry + preview frames (step 4)
 # --------------------------------------------------------------------------
+#
+# start: {"type":"start","scene":{...},"total_timesteps":?}
+# stop:  {"type":"stop"}
+# outbound: started, telemetry (reward/success/progress), frame (policy preview),
+#           done {model}, error {message}
+#
+# Training (model.learn) is blocking and CPU/GPU-heavy, so it runs in a worker
+# thread (asyncio.to_thread). The telemetry callback it invokes is on the worker
+# thread, so it pushes messages onto an asyncio queue via call_soon_threadsafe;
+# a pump coroutine forwards them to the client.
+
+def _run_train(
+    scene: dict, total_timesteps: int, model_id: str,
+    outbox: asyncio.Queue, loop: asyncio.AbstractEventLoop, stop: dict[str, bool],
+) -> None:
+    from telokine.train import train
+
+    def emit(msg: dict) -> None:
+        loop.call_soon_threadsafe(outbox.put_nowait, msg)
+
+    try:
+        train(
+            scene=scene,
+            rewards=[],
+            total_timesteps=total_timesteps,
+            on_telemetry=emit,
+            should_stop=lambda: stop["stop"],
+            model_id=model_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        emit({"type": "error", "message": str(exc)})
+    finally:
+        emit({"type": "finished"})
+
+
 @app.websocket("/ws/train")
 async def train_ws(ws: WebSocket) -> None:
     await ws.accept()
+    train_task: asyncio.Task | None = None
+    pump_task: asyncio.Task | None = None
+    outbox: asyncio.Queue = asyncio.Queue()
+    stop: dict[str, bool] = {"stop": False}
+
     try:
         while True:
             raw = await ws.receive_text()
@@ -148,7 +253,52 @@ async def train_ws(ws: WebSocket) -> None:
             except json.JSONDecodeError:
                 await ws.send_json({"type": "error", "message": "invalid json"})
                 continue
-            await ws.send_json({"type": "ack", "received": msg.get("type")})
-            await asyncio.sleep(0)
+
+            kind = msg.get("type")
+
+            if kind == "start":
+                if train_task and not train_task.done():
+                    stop["stop"] = True
+                    await train_task
+                if pump_task and not pump_task.done():
+                    await outbox.put(None)
+                    await pump_task
+
+                stop = {"stop": False}
+                outbox = asyncio.Queue()
+                pump_task = asyncio.create_task(_pump(ws, outbox))
+
+                model_id = f"policy_{uuid.uuid4().hex[:8]}"
+                total = int(msg.get("total_timesteps", 150_000))
+                await ws.send_json({"type": "started", "model_id": model_id, "total_timesteps": total})
+                train_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        _run_train, msg.get("scene", {}), total, model_id,
+                        outbox, asyncio.get_running_loop(), stop,
+                    )
+                )
+
+            elif kind == "stop":
+                stop["stop"] = True
+                if train_task and not train_task.done():
+                    await train_task
+
     except WebSocketDisconnect:
-        return
+        stop["stop"] = True
+        if train_task and not train_task.done():
+            train_task.cancel()
+
+
+# --------------------------------------------------------------------------
+# SPA catch-all — must be LAST so it doesn't shadow /health, /policies, /ws/*.
+# Serves the built frontend's index.html for any non-API GET.
+# --------------------------------------------------------------------------
+if os.path.isdir(os.path.join(_FRONTEND_DIR, "assets")):
+
+    @app.get("/{full_path:path}")
+    def _spa(full_path: str):
+        # Prefer a real file if one exists (e.g. favicon), else index.html.
+        candidate = os.path.join(_FRONTEND_DIR, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))

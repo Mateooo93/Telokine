@@ -1,4 +1,5 @@
 import { useRunStore, type FrameObject } from '../store/useRunStore'
+import type { SerializedObject } from '../viewport/types'
 
 // WebSocket client for the /ws/sim channel (Layer 2 live physics).
 //
@@ -70,36 +71,28 @@ export function connect(): Promise<void> {
   return connecting
 }
 
-export interface SerializedObject {
-  id: string
-  type: string
-  position: [number, number, number]
-  size: number
-  radius: number
-  weight: number
-  friction: number
-  role: string
-  color: string
-}
-
-/** Begin a physics rollout for the given scene. */
+/** Begin a rollout for the given scene.
+ *
+ * If `opts.policy` is given (a trained policy name from /ws/train), the agent
+ * is driven by that policy instead of free-falling under gravity.
+ */
 export async function startRun(
   scene: { objects: SerializedObject[] },
-  opts: { seed?: number; maxSteps?: number } = {},
+  opts: { seed?: number; maxSteps?: number; policy?: string } = {},
 ): Promise<void> {
   useRunStore.getState().setError(null)
   await connect()
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     throw new Error('Socket not open')
   }
-  ws.send(
-    JSON.stringify({
-      type: 'start',
-      scene,
-      seed: opts.seed ?? Date.now(),
-      max_steps: opts.maxSteps ?? 1000,
-    }),
-  )
+  const payload: Record<string, unknown> = {
+    type: 'start',
+    scene,
+    seed: opts.seed ?? Date.now(),
+    max_steps: opts.maxSteps ?? 1000,
+  }
+  if (opts.policy) payload.policy = opts.policy
+  ws.send(JSON.stringify(payload))
 }
 
 /** Request the current rollout to stop. */
