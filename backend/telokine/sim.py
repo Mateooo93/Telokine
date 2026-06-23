@@ -215,17 +215,9 @@ class Simulator:
     def reset(self) -> None:
         mj = self._mj
         mj.mj_resetData(self.model, self.data)
-
-        # Give the agent a random horizontal shove + spin so the drop tumbles —
-        # a stand-in for real control until step 3 (agent actions) lands.
-        if self._agent_id:
-            va = self._agent_dofadr
-            self.data.qvel[va + 0] = self._rng.uniform(-2.0, 2.0)  # vx
-            self.data.qvel[va + 1] = self._rng.uniform(-2.0, 2.0)  # vy
-            self.data.qvel[va + 3] = self._rng.uniform(-3.0, 3.0)  # wx
-            self.data.qvel[va + 4] = self._rng.uniform(-3.0, 3.0)  # wy
-            self.data.qvel[va + 5] = self._rng.uniform(-3.0, 3.0)  # wz
-
+        # Pure physics from the placed pose: the agent drops under gravity from
+        # wherever (and however) the user positioned/rotated it. No random spin
+        # — that was a step-2 stand-in before the cube became a real agent.
         mj.mj_forward(self.model, self.data)
 
     def step(self, n_substeps: int = SUBSTEPS_PER_FRAME) -> None:

@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { Grid, OrbitControls, TransformControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -24,22 +24,37 @@ export function Viewport() {
   const running = useRunStore((s) => s.running)
   const transforms = useRunStore((s) => s.transforms)
 
-  // Track each object's rendered group so the gizmo can attach to the selected one.
+  // Track each object's rendered group so the gizmo can attach to the selected
+  // one. This is a mutable ref (NOT state) — mutations here must not trigger a
+  // re-render; we rely on selectedId/running changes to recompute selection.
   const refs = useRef<Record<string, THREE.Object3D>>({})
 
   // Reusable temp objects to convert the gizmo's quaternion -> Euler for storage.
   const tmpQuat = useRef(new THREE.Quaternion())
   const tmpEuler = useRef(new THREE.Euler())
 
-  const handleGizmoChange = (id: string) => {
-    const obj = refs.current[id]
-    if (!obj) return
-    const p = obj.position
-    moveObject(id, [p.x, p.y, p.z])
-    tmpQuat.current.copy(obj.quaternion)
-    tmpEuler.current.setFromQuaternion(tmpQuat.current, 'XYZ')
-    rotateObject(id, [tmpEuler.current.x, tmpEuler.current.y, tmpEuler.current.z])
-  }
+  // Stable callback that SceneObjectMesh uses to register/deregister its group
+  // on mount/unmount. MUST stay referentially stable so the effect that calls it
+  // only runs once per object (otherwise refs flicker to null mid-drag and the
+  // gizmo stops writing to the store).
+  const registerObject = useCallback((id: string, o: THREE.Object3D | null) => {
+    if (o) refs.current[id] = o
+    else delete refs.current[id]
+  }, [])
+
+  // Stable: writes the gizmo's current transform back into the scene store.
+  const handleGizmoChange = useCallback(
+    (id: string) => {
+      const obj = refs.current[id]
+      if (!obj) return
+      const p = obj.position
+      moveObject(id, [p.x, p.y, p.z])
+      tmpQuat.current.copy(obj.quaternion)
+      tmpEuler.current.setFromQuaternion(tmpQuat.current, 'XYZ')
+      rotateObject(id, [tmpEuler.current.x, tmpEuler.current.y, tmpEuler.current.z])
+    },
+    [moveObject, rotateObject],
+  )
 
   const handleObjectDown = (id: string) => (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
@@ -47,9 +62,7 @@ export function Viewport() {
     select(id)
   }
 
-  const selectedObject = selectedId
-    ? refs.current[selectedId]
-    : null
+  const selectedObject = selectedId ? refs.current[selectedId] ?? null : null
   const showGizmo = !running && !!selectedObject
 
   return (
@@ -104,21 +117,17 @@ export function Viewport() {
           obj={obj}
           selected={obj.id === selectedId}
           live={transforms[obj.id]}
-          onReady={(o) => {
-            if (o) refs.current[obj.id] = o
-            else delete refs.current[obj.id]
-          }}
+          onReady={registerObject}
           onPointerDown={handleObjectDown(obj.id)}
         />
       ))}
 
-      {showGizmo && (
+      {showGizmo && selectedId && (
         <TransformControls
           object={selectedObject}
           mode={transformMode}
           size={0.85}
-          // Re-read the object's transform into the store on every gizmo change.
-          onObjectChange={() => selectedId && handleGizmoChange(selectedId)}
+          onObjectChange={() => handleGizmoChange(selectedId)}
         />
       )}
 

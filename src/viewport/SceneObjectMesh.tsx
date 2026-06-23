@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Edges } from '@react-three/drei'
 import { type ThreeEvent } from '@react-three/fiber'
 import type * as THREE from 'three'
@@ -9,8 +10,8 @@ interface Props {
   selected: boolean
   /** When a run is active, the live physics transform overrides the editor pose. */
   live?: Transform
-  /** Receives the rendered group (or null on unmount) so the gizmo can attach. */
-  onReady?: (group: THREE.Object3D | null) => void
+  /** Stable callback (useCallback) registering this group on mount, null on unmount. */
+  onReady: (id: string, group: THREE.Object3D | null) => void
   onPointerDown: (e: ThreeEvent<PointerEvent>) => void
 }
 
@@ -21,23 +22,27 @@ interface Props {
  * - Run mode: pose comes from the live physics transform (position + quaternion
  *   streamed from the backend). Floor is excluded from mirroring because its
  *   mesh bakes a local -90° rotation.
+ *
+ * The group registers itself once (on mount) via a stable internal ref, so the
+ * gizmo always has a valid handle to it — never null mid-drag.
  */
 export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }: Props) {
   const isFloor = obj.type === 'floor'
   const mirrored = !!live && !isFloor
 
-  // In editor mode use Euler `rotation` (three.js default order XYZ); in mirror
-  // mode use the streamed quaternion. The two props are mutually exclusive.
+  // Editor pose (Euler XYZ) vs live physics pose (quaternion). Mutually exclusive.
   const groupProps = mirrored
     ? { position: live!.pos, quaternion: live!.rot }
     : { position: obj.position, rotation: obj.rotation }
 
+  const groupRef = useRef<THREE.Group>(null)
+  useEffect(() => {
+    onReady(obj.id, groupRef.current)
+    return () => onReady(obj.id, null)
+  }, [obj.id, onReady])
+
   return (
-    <group
-      {...groupProps}
-      onPointerDown={onPointerDown}
-      ref={(o) => onReady?.(o as THREE.Object3D | null)}
-    >
+    <group {...groupProps} ref={groupRef} onPointerDown={onPointerDown}>
       {obj.type === 'floor' && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[obj.size, obj.size]} />
