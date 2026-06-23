@@ -6,8 +6,8 @@ Each step is independently shippable and validates one idea.
 | #  | Step                  | Layer | Status      | Notes |
 |----|-----------------------|-------|-------------|-------|
 | 1  | 3D viewport           | 1     | ✅ **Done** | Floor, cube agent, target, orbit/zoom, add & drag objects, selection. |
-| 2  | Physics simulation    | 2     | ⬜ Next     | MuJoCo floor + cube + target from the scene model. Visible via a "Run" rollout. |
-| 3  | Cube agent            | 2     | ⬜          | Observation/action wiring so the cube can be controlled. |
+| 2  | Physics simulation    | 2     | ✅ **Done** | MuJoCo world built from the scene model; ▶ Run streams a live gravity rollout to the viewport over `/ws/sim`. |
+| 3  | Cube agent            | 2     | ⬜ Next     | Observation/action wiring so the cube can be controlled/learn. |
 | 4  | Training backend      | 3     | ⬜          | SB3 PPO loop + telemetry callback over `/ws/train`. |
 | 5  | Reward blocks         | 1→3   | ⬜          | Block editor UI → `reward.compile_blocks`/`evaluate`. |
 | 6  | Train button          | 1↔3   | ⬜          | Wire **Train** to the backend; viewport mirrors live sim. |
@@ -28,8 +28,16 @@ Each step is independently shippable and validates one idea.
 - [x] Drag objects across the floor; selection with a status readout.
 - [x] Looks like a game-engine editor, not an AI tool.
 
-## Definition of done for step 2 (next)
+## Definition of done for step 2
 
-- [ ] Scene model → MuJoCo world (floor plane, cube body, target site).
-- [ ] A "Run" rollout drops the cube under gravity and renders it live.
-- [ ] No reward/learning yet — just believable physics.
+- [x] Scene model → MuJoCo world (ground + dynamic cube + non-colliding target).
+- [x] A "Run" rollout drops the cube under gravity and renders it live.
+- [x] Y-up coordinates shared with Three.js (no conversion needed).
+- [x] Auto-stops when the agent settles.
+- [x] Live per-object transforms streamed over `/ws/sim`.
+
+## Definition of done for step 3 (next)
+
+- [ ] Define observation (pose, velocity, relative target vector).
+- [ ] Define action (forces/torques on the cube).
+- [ ] Wire it into the Gymnasium env so a policy (even random) can drive it.

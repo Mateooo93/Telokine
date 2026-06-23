@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { Grid, OrbitControls } from '@react-three/drei'
 import { useSceneStore } from '../store/useSceneStore'
+import { useRunStore } from '../store/useRunStore'
 import { SceneObjectMesh } from './SceneObjectMesh'
 
 /**
@@ -15,8 +16,12 @@ export function Viewport() {
   const select = useSceneStore((s) => s.select)
   const moveObject = useSceneStore((s) => s.moveObject)
 
+  const running = useRunStore((s) => s.running)
+  const transforms = useRunStore((s) => s.transforms)
+
   // Drag-to-move state. OrbitControls is disabled while dragging an object so
-  // the pointer can move it across the floor.
+  // the pointer can move it across the floor. Dragging is disabled entirely
+  // during a run — the physics owns the object positions then.
   const dragId = useRef<string | null>(null)
   const [orbitEnabled, setOrbitEnabled] = useState(true)
 
@@ -33,12 +38,14 @@ export function Viewport() {
 
   const handleObjectDown = (id: string) => (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
+    if (running) return
     select(id)
     dragId.current = id
     setOrbitEnabled(false)
   }
 
   const handleFloorMove = (e: ThreeEvent<PointerEvent>) => {
+    if (running) return
     const id = dragId.current
     if (!id) return
     const obj = useSceneStore.getState().objects.find((o) => o.id === id)
@@ -103,6 +110,7 @@ export function Viewport() {
           key={obj.id}
           obj={obj}
           selected={obj.id === selectedId}
+          live={transforms[obj.id]}
           onPointerDown={handleObjectDown(obj.id)}
         />
       ))}

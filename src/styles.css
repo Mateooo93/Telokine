@@ -83,6 +83,14 @@ button {
   background: #1f6f43;
   border-color: transparent;
 }
+.btn.run.stop {
+  background: #8a2a2a;
+}
+.err {
+  color: #ff8a7a;
+  font-size: 12px;
+  margin-right: 4px;
+}
 
 /* ---- Sidebar ---- */
 .sidebar {

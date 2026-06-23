@@ -13,9 +13,12 @@ dependencies = [
     "numpy>=1.26",
 ]
 
-# Heavy ML deps. Install when we wire up Layers 2 & 3:
-#   uv sync --extra ml
+# Physics only — needed from step 2 onwards. MuJoCo ships self-contained
+# manylinux wheels (bundles the native lib), so no system packages required.
 [project.optional-dependencies]
+sim = ["mujoco>=3.1"]
+
+# Full learning stack — installed from step 3 (gymnasium) / step 4 (RL).
 ml = [
     "mujoco>=3.1",
     "gymnasium>=1.0",

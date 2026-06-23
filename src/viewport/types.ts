@@ -58,3 +58,32 @@ export function createObject(type: ObjectType, position?: Vec3): SceneObject {
       return { ...base, color: '#222632', role: 'floor', size: 12, position: position ?? [0, 0, 0] }
   }
 }
+
+/** Serialize the editor scene into the JSON shape the Python backend expects. */
+export interface SerializedObject {
+  id: string
+  type: ObjectType
+  position: Vec3
+  size: number
+  radius: number
+  weight: number
+  friction: number
+  role: ObjectRole
+  color: string
+}
+
+export function serializeScene(objects: SceneObject[]): { objects: SerializedObject[] } {
+  return {
+    objects: objects.map((o) => ({
+      id: o.id,
+      type: o.type,
+      position: o.position,
+      size: o.size,
+      radius: o.radius,
+      weight: o.weight,
+      friction: o.friction,
+      role: o.role,
+      color: o.color,
+    })),
+  }
+}
