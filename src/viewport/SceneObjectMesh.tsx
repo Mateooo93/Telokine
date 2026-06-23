@@ -18,31 +18,47 @@ interface Props {
 /**
  * Renders one scene object.
  *
- * - Editor mode: pose comes from the object's position + rotation (Euler XYZ).
- * - Run mode: pose comes from the live physics transform (position + quaternion
- *   streamed from the backend). Floor is excluded from mirroring because its
- *   mesh bakes a local -90° rotation.
+ * Pose is applied IMPERATIVELY in an effect, never via declarative
+ * position/rotation/quaternion props. This is deliberate: drei's
+ * TransformControls updates the attached object every frame, and if the object
+ * is ALSO driven by declarative transform props the two fight — R3F reapplies
+ * the prop, the gizmo overrides it, and rotation visibly resets to identity.
+ * Applying imperatively (only when the pose values change) leaves the gizmo as
+ * the sole owner during a drag, so edited rotations stick.
  *
- * The group registers itself once (on mount) via a stable internal ref, so the
- * gizmo always has a valid handle to it — never null mid-drag.
+ * - Editor mode: pose from obj.position + obj.rotation (Euler XYZ).
+ * - Run mode: pose from the streamed live transform (position + quaternion).
+ *   Floor is excluded from mirroring (its mesh bakes a local -90° rotation).
  */
 export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }: Props) {
   const isFloor = obj.type === 'floor'
   const mirrored = !!live && !isFloor
 
-  // Editor pose (Euler XYZ) vs live physics pose (quaternion). Mutually exclusive.
-  const groupProps = mirrored
-    ? { position: live!.pos, quaternion: live!.rot }
-    : { position: obj.position, rotation: obj.rotation }
-
   const groupRef = useRef<THREE.Group>(null)
+
+  // Apply pose when the values change. During a gizmo drag the store is not
+  // touched (we sync only on drag-end), so this effect does not run mid-drag
+  // and never fights the gizmo.
+  useEffect(() => {
+    const g = groupRef.current
+    if (!g) return
+    if (mirrored) {
+      g.position.set(live!.pos[0], live!.pos[1], live!.pos[2])
+      g.quaternion.set(live!.rot[0], live!.rot[1], live!.rot[2], live!.rot[3])
+    } else {
+      g.position.set(obj.position[0], obj.position[1], obj.position[2])
+      g.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2])
+    }
+  }, [obj.position, obj.rotation, live, mirrored])
+
+  // Register the group once on mount, unregister on unmount.
   useEffect(() => {
     onReady(obj.id, groupRef.current)
     return () => onReady(obj.id, null)
   }, [obj.id, onReady])
 
   return (
-    <group {...groupProps} ref={groupRef} onPointerDown={onPointerDown}>
+    <group ref={groupRef} onPointerDown={onPointerDown}>
       {obj.type === 'floor' && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[obj.size, obj.size]} />

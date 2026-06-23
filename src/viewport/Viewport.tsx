@@ -127,7 +127,10 @@ export function Viewport() {
           object={selectedObject}
           mode={transformMode}
           size={0.85}
-          onObjectChange={() => handleGizmoChange(selectedId)}
+          // Sync the gizmo result back to the store ONLY when the drag ends.
+          // Writing on every onObjectChange would update the store mid-drag and
+          // re-trigger SceneObjectMesh's pose effect, fighting the gizmo.
+          onMouseUp={() => handleGizmoChange(selectedId)}
         />
       )}
 
