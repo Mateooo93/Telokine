@@ -93,3 +93,28 @@ def test_target_is_non_colliding():
     tgt = sim.data.body("b_tgt")
     assert abs(float(tgt.xpos[0]) - 0.0) < 1e-6
     assert abs(float(tgt.xpos[1]) - 0.5) < 1e-6  # Y-up height
+
+
+def test_lift_agent_flag():
+    from telokine.sim import build_mjcf
+
+    up = build_mjcf({"objects": [_cube(pos=(0, 0.5, 0))]}, lift_agent=True)
+    down = build_mjcf({"objects": [_cube(pos=(0, 0.5, 0))]}, lift_agent=False)
+    # lifted adds 1.0 to the start height; non-lifted keeps the placed pose
+    assert 'pos="0 1.5 0"' in up
+    assert 'pos="0 0.5 0"' in down
+
+
+def test_edited_rotation_becomes_body_quat():
+    import math
+    from telokine.sim import _euler_xyz_to_wxyz, build_mjcf
+
+    cube = _cube(pos=(0, 0.5, 0))
+    cube["rotation"] = [math.pi / 2, 0, 0]  # 90deg about X
+    xml = build_mjcf({"objects": [cube]}, lift_agent=False)
+    assert "quat" in xml  # the body got an initial orientation
+    # Quaternion of a 90deg-X rotation is (w,x,y,z) = (cos45, sin45, 0, 0)
+    w, x, y, z = _euler_xyz_to_wxyz(math.pi / 2, 0, 0)
+    assert abs(w - math.sqrt(0.5)) < 1e-6
+    assert abs(x - math.sqrt(0.5)) < 1e-6
+    assert abs(y) < 1e-6 and abs(z) < 1e-6

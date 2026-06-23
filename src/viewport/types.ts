@@ -12,6 +12,7 @@ export interface SceneObject {
   id: string
   type: ObjectType
   position: Vec3
+  rotation: Vec3
   color: string
   // Editable physical-ish properties. Wired to the sim in later steps.
   size: number
@@ -43,6 +44,7 @@ export function createObject(type: ObjectType, position?: Vec3): SceneObject {
     radius: 0.5,
     weight: 1,
     friction: 0.5,
+    rotation: [0, 0, 0] as Vec3,
   }
 
   switch (type) {
@@ -64,6 +66,7 @@ export interface SerializedObject {
   id: string
   type: ObjectType
   position: Vec3
+  rotation: Vec3
   size: number
   radius: number
   weight: number
@@ -78,6 +81,7 @@ export function serializeScene(objects: SceneObject[]): { objects: SerializedObj
       id: o.id,
       type: o.type,
       position: o.position,
+      rotation: o.rotation,
       size: o.size,
       radius: o.radius,
       weight: o.weight,

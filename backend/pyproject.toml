@@ -13,12 +13,16 @@ dependencies = [
     "numpy>=1.26",
 ]
 
-# Physics only — needed from step 2 onwards. MuJoCo ships self-contained
-# manylinux wheels (bundles the native lib), so no system packages required.
+# Physics + env interface — needed from step 2 (physics) and step 3 (agent).
+# MuJoCo ships self-contained manylinux wheels (bundles the native lib), and
+# gymnasium is pure-python, so no system packages are required.
 [project.optional-dependencies]
-sim = ["mujoco>=3.1"]
+sim = [
+    "mujoco>=3.1",
+    "gymnasium>=1.0",
+]
 
-# Full learning stack — installed from step 3 (gymnasium) / step 4 (RL).
+# Full learning stack — installed from step 4 (RL with PPO).
 ml = [
     "mujoco>=3.1",
     "gymnasium>=1.0",

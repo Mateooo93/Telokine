@@ -1093,6 +1093,7 @@ ml = [
     { name = "torch" },
 ]
 sim = [
+    { name = "gymnasium" },
     { name = "mujoco" },
 ]
 
@@ -1106,6 +1107,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "gymnasium", marker = "extra == 'ml'", specifier = ">=1.0" },
+    { name = "gymnasium", marker = "extra == 'sim'", specifier = ">=1.0" },
     { name = "mujoco", marker = "extra == 'ml'", specifier = ">=3.1" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.1" },
     { name = "numpy", specifier = ">=1.26" },

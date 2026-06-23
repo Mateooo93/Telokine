@@ -8,6 +8,7 @@ what the user edits is exactly what gets simulated.
 """
 from __future__ import annotations
 
+import math
 import random
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -25,6 +26,24 @@ def _f(v: float) -> str:
 
 def _v3(vals: list[float] | tuple[float, float, float]) -> str:
     return f"{_f(vals[0])} {_f(vals[1])} {_f(vals[2])}"
+
+
+def _euler_xyz_to_wxyz(ex: float, ey: float, ez: float) -> tuple[float, float, float, float]:
+    """Euler XYZ (radians) -> quaternion, matching three.js Euler order 'XYZ'.
+
+    Returns (w, x, y, z) so it can be written straight into an MJCF ``quat``
+    attribute, which also uses [w, x, y, z]. Keeping this in lockstep with the
+    frontend's Euler XYZ rendering means an edited rotation carries into the
+    sim start pose unchanged.
+    """
+    c1, s1 = math.cos(ex / 2), math.sin(ex / 2)
+    c2, s2 = math.cos(ey / 2), math.sin(ey / 2)
+    c3, s3 = math.cos(ez / 2), math.sin(ez / 2)
+    x = s1 * c2 * c3 + c1 * s2 * s3
+    y = c1 * s2 * c3 - s1 * c2 * s3
+    z = c1 * c2 * s3 + s1 * s2 * c3
+    w = c1 * c2 * c3 - s1 * s2 * s3
+    return w, x, y, z
 
 
 def _hex_to_rgba(hexstr: str, alpha: float = 1.0) -> str:
@@ -77,11 +96,16 @@ def _build_geom(body: ET.Element, obj: dict) -> None:
     geom.set("friction", friction)
 
 
-def build_mjcf(scene: dict) -> str:
+def build_mjcf(scene: dict, lift_agent: bool = True) -> str:
     """Translate the scene model into an MJCF XML string.
 
     The world is built Y-up to match Three.js exactly, so object positions and
     quaternions pass through between frontend and backend with no conversion.
+
+    ``lift_agent`` raises the agent a little on start so a Run shows a visible
+    drop under gravity. Training (the env) uses ``lift_agent=False`` so the
+    cube begins at its placed pose. Any edited rotation becomes the body's
+    initial orientation.
     """
     mujoco_el = ET.Element("mujoco", {"model": "telokine"})
     ET.SubElement(mujoco_el, "option", {"timestep": "0.002", "gravity": "0 -9.81 0"})
@@ -111,16 +135,19 @@ def build_mjcf(scene: dict) -> str:
     for obj in scene.get("objects", []):
         oid = obj["id"]
         role = obj.get("role", "static")
-        # Lift the agent a little so every Run shows a visible drop under gravity.
         pos = list(obj.get("position", [0, 0.5, 0]))
-        if role == "agent":
+        if role == "agent" and lift_agent:
+            # Lift the agent a little so every Run shows a visible drop.
             pos[1] = pos[1] + 1.0
 
-        body = ET.SubElement(
-            world,
-            "body",
-            {"name": f"b_{oid}", "pos": _v3(pos)},
-        )
+        body_attrs = {"name": f"b_{oid}", "pos": _v3(pos)}
+        # Apply the edited orientation as the body's initial quaternion.
+        rot = obj.get("rotation", [0, 0, 0])
+        if rot and any(abs(float(v)) > 1e-6 for v in rot):
+            w, x, y, z = _euler_xyz_to_wxyz(float(rot[0]), float(rot[1]), float(rot[2]))
+            body_attrs["quat"] = f"{_f(w)} {_f(x)} {_f(y)} {_f(z)}"
+
+        body = ET.SubElement(world, "body", body_attrs)
         if role == "agent":
             ET.SubElement(body, "freejoint", {"name": f"j_{oid}"})
         _build_geom(body, obj)

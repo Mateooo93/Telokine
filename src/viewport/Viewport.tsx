@@ -1,57 +1,56 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { Grid, OrbitControls } from '@react-three/drei'
+import { Grid, OrbitControls, TransformControls } from '@react-three/drei'
+import * as THREE from 'three'
 import { useSceneStore } from '../store/useSceneStore'
 import { useRunStore } from '../store/useRunStore'
 import { SceneObjectMesh } from './SceneObjectMesh'
 
 /**
- * The 3D viewport — Layer 1. In the editor this renders the scene from the
- * zustand store. During training it will instead mirror transforms streamed
- * from the Python sim. Same canvas, two data sources.
+ * The 3D viewport — Layer 1.
+ * - Editor mode: objects are driven by the zustand scene store; a transform
+ *   gizmo moves/rotates the selected object.
+ * - Run mode: objects mirror transforms streamed from the Python sim; the
+ *   gizmo is hidden because physics owns the poses then.
  */
 export function Viewport() {
   const objects = useSceneStore((s) => s.objects)
   const selectedId = useSceneStore((s) => s.selectedId)
+  const transformMode = useSceneStore((s) => s.transformMode)
   const select = useSceneStore((s) => s.select)
   const moveObject = useSceneStore((s) => s.moveObject)
+  const rotateObject = useSceneStore((s) => s.rotateObject)
 
   const running = useRunStore((s) => s.running)
   const transforms = useRunStore((s) => s.transforms)
 
-  // Drag-to-move state. OrbitControls is disabled while dragging an object so
-  // the pointer can move it across the floor. Dragging is disabled entirely
-  // during a run — the physics owns the object positions then.
-  const dragId = useRef<string | null>(null)
-  const [orbitEnabled, setOrbitEnabled] = useState(true)
+  // Track each object's rendered group so the gizmo can attach to the selected one.
+  const refs = useRef<Record<string, THREE.Object3D>>({})
 
-  useEffect(() => {
-    const onUp = () => {
-      if (dragId.current) {
-        dragId.current = null
-        setOrbitEnabled(true)
-      }
-    }
-    window.addEventListener('pointerup', onUp)
-    return () => window.removeEventListener('pointerup', onUp)
-  }, [])
+  // Reusable temp objects to convert the gizmo's quaternion -> Euler for storage.
+  const tmpQuat = useRef(new THREE.Quaternion())
+  const tmpEuler = useRef(new THREE.Euler())
+
+  const handleGizmoChange = (id: string) => {
+    const obj = refs.current[id]
+    if (!obj) return
+    const p = obj.position
+    moveObject(id, [p.x, p.y, p.z])
+    tmpQuat.current.copy(obj.quaternion)
+    tmpEuler.current.setFromQuaternion(tmpQuat.current, 'XYZ')
+    rotateObject(id, [tmpEuler.current.x, tmpEuler.current.y, tmpEuler.current.z])
+  }
 
   const handleObjectDown = (id: string) => (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
     if (running) return
     select(id)
-    dragId.current = id
-    setOrbitEnabled(false)
   }
 
-  const handleFloorMove = (e: ThreeEvent<PointerEvent>) => {
-    if (running) return
-    const id = dragId.current
-    if (!id) return
-    const obj = useSceneStore.getState().objects.find((o) => o.id === id)
-    if (!obj) return
-    moveObject(id, [e.point.x, obj.position[1], e.point.z])
-  }
+  const selectedObject = selectedId
+    ? refs.current[selectedId]
+    : null
+  const showGizmo = !running && !!selectedObject
 
   return (
     <Canvas
@@ -93,14 +92,8 @@ export function Viewport() {
         infiniteGrid
       />
 
-      {/* Stage floor: shadow receiver + drag surface */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0, 0]}
-        receiveShadow
-        onPointerMove={handleFloorMove}
-        onPointerDown={() => select(null)}
-      >
+      {/* Stage floor: shadow receiver */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
         <planeGeometry args={[200, 200]} />
         <meshStandardMaterial color="#12141b" roughness={1} />
       </mesh>
@@ -111,13 +104,26 @@ export function Viewport() {
           obj={obj}
           selected={obj.id === selectedId}
           live={transforms[obj.id]}
+          onReady={(o) => {
+            if (o) refs.current[obj.id] = o
+            else delete refs.current[obj.id]
+          }}
           onPointerDown={handleObjectDown(obj.id)}
         />
       ))}
 
+      {showGizmo && (
+        <TransformControls
+          object={selectedObject}
+          mode={transformMode}
+          size={0.85}
+          // Re-read the object's transform into the store on every gizmo change.
+          onObjectChange={() => selectedId && handleGizmoChange(selectedId)}
+        />
+      )}
+
       <OrbitControls
         makeDefault
-        enabled={orbitEnabled}
         enableDamping
         dampingFactor={0.12}
         minDistance={3}

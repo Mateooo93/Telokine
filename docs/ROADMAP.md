@@ -7,8 +7,8 @@ Each step is independently shippable and validates one idea.
 |----|-----------------------|-------|-------------|-------|
 | 1  | 3D viewport           | 1     | ✅ **Done** | Floor, cube agent, target, orbit/zoom, add & drag objects, selection. |
 | 2  | Physics simulation    | 2     | ✅ **Done** | MuJoCo world built from the scene model; ▶ Run streams a live gravity rollout to the viewport over `/ws/sim`. |
-| 3  | Cube agent            | 2     | ⬜ Next     | Observation/action wiring so the cube can be controlled/learn. |
-| 4  | Training backend      | 3     | ⬜          | SB3 PPO loop + telemetry callback over `/ws/train`. |
+| 3  | Cube agent            | 2     | ✅ **Done** | Gymnasium env: 12-dim observation (rel target, velocities, up vector) + 6-dim action (force + torque). Heuristic policy reaches target & beats random. Editor tools added (move/rotate gizmos, size/weight/friction/color inspector, rotation). |
+| 4  | Training backend      | 3     | ⬜ Next     | SB3 PPO loop + telemetry callback over `/ws/train`. |
 | 5  | Reward blocks         | 1→3   | ⬜          | Block editor UI → `reward.compile_blocks`/`evaluate`. |
 | 6  | Train button          | 1↔3   | ⬜          | Wire **Train** to the backend; viewport mirrors live sim. |
 | 7  | Progress graphs       | 1     | ⬜          | Live reward / success / episode charts from telemetry. |
@@ -36,8 +36,19 @@ Each step is independently shippable and validates one idea.
 - [x] Auto-stops when the agent settles.
 - [x] Live per-object transforms streamed over `/ws/sim`.
 
-## Definition of done for step 3 (next)
+## Definition of done for step 3
 
-- [ ] Define observation (pose, velocity, relative target vector).
-- [ ] Define action (forces/torques on the cube).
-- [ ] Wire it into the Gymnasium env so a policy (even random) can drive it.
+- [x] Observation (12-d): rel-target, linear vel, angular vel, up vector.
+- [x] Action (6-d): force + torque, scaled, applied via `xfrc_applied`.
+- [x] Gymnasium env (`CubeAgentEnv`) with reset/step/reward/termination.
+- [x] Tuned force authority (30N) to overcome flat-box contact stiction.
+- [x] Heuristic policy reaches target & beats random (proves wiring).
+- [x] Editor tools: move/rotate gizmos, properties inspector (size, radius,
+      rotation in degrees, weight, friction, color, delete).
+- [x] Edited rotation carries into the sim start pose (Euler XYZ ↔ quat).
+
+## Definition of done for step 4 (next)
+
+- [ ] SB3 PPO loop over `CubeAgentEnv`, on the GPU.
+- [ ] Telemetry callback streaming reward / episode / success over `/ws/train`.
+- [ ] Train button runs a short run and the graphs (step 7) start to live.

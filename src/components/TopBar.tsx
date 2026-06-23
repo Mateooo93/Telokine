@@ -7,8 +7,12 @@ export function TopBar() {
   const running = useRunStore((s) => s.running)
   const error = useRunStore((s) => s.error)
   const objects = useSceneStore((s) => s.objects)
+  const selectedId = useSceneStore((s) => s.selectedId)
+  const transformMode = useSceneStore((s) => s.transformMode)
+  const setTransformMode = useSceneStore((s) => s.setTransformMode)
 
   const hasAgent = objects.some((o) => o.role === 'agent')
+  const toolsEnabled = !running && !!selectedId
 
   const handleRun = () => {
     if (running) {
@@ -25,6 +29,26 @@ export function TopBar() {
       <div className="brand">
         Telokine<span className="dot">.</span>
       </div>
+
+      <div className="toolgroup">
+        <button
+          className={`btn tool ${transformMode === 'translate' ? 'active' : ''}`}
+          onClick={() => setTransformMode('translate')}
+          disabled={!toolsEnabled}
+          title="Move (drag the gizmo arrows)"
+        >
+          ✥ Move
+        </button>
+        <button
+          className={`btn tool ${transformMode === 'rotate' ? 'active' : ''}`}
+          onClick={() => setTransformMode('rotate')}
+          disabled={!toolsEnabled}
+          title="Rotate (drag the gizmo rings)"
+        >
+          ⟳ Rotate
+        </button>
+      </div>
+
       <div className="spacer" />
       {error && <span className="err">{error}</span>}
       <button

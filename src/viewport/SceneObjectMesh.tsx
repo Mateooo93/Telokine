@@ -1,5 +1,6 @@
 import { Edges } from '@react-three/drei'
 import { type ThreeEvent } from '@react-three/fiber'
+import type * as THREE from 'three'
 import type { SceneObject } from './types'
 import type { Transform } from '../store/useRunStore'
 
@@ -8,25 +9,35 @@ interface Props {
   selected: boolean
   /** When a run is active, the live physics transform overrides the editor pose. */
   live?: Transform
+  /** Receives the rendered group (or null on unmount) so the gizmo can attach. */
+  onReady?: (group: THREE.Object3D | null) => void
   onPointerDown: (e: ThreeEvent<PointerEvent>) => void
 }
 
 /**
- * Renders one scene object. In editor mode it uses the object's stored
- * position; while a rollout is running it mirrors the physics transform
- * streamed from the backend. Floor objects are excluded from mirroring
- * because their mesh bakes a local -90° rotation.
+ * Renders one scene object.
+ *
+ * - Editor mode: pose comes from the object's position + rotation (Euler XYZ).
+ * - Run mode: pose comes from the live physics transform (position + quaternion
+ *   streamed from the backend). Floor is excluded from mirroring because its
+ *   mesh bakes a local -90° rotation.
  */
-export function SceneObjectMesh({ obj, selected, live, onPointerDown }: Props) {
+export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }: Props) {
   const isFloor = obj.type === 'floor'
-  const mirrored = live && !isFloor
+  const mirrored = !!live && !isFloor
 
-  // Default to identity rotation so the pose always resets cleanly when a run ends.
-  const position: [number, number, number] = mirrored ? live!.pos : obj.position
-  const quaternion: [number, number, number, number] = mirrored ? live!.rot : [0, 0, 0, 1]
+  // In editor mode use Euler `rotation` (three.js default order XYZ); in mirror
+  // mode use the streamed quaternion. The two props are mutually exclusive.
+  const groupProps = mirrored
+    ? { position: live!.pos, quaternion: live!.rot }
+    : { position: obj.position, rotation: obj.rotation }
 
   return (
-    <group position={position} quaternion={quaternion} onPointerDown={onPointerDown}>
+    <group
+      {...groupProps}
+      onPointerDown={onPointerDown}
+      ref={(o) => onReady?.(o as THREE.Object3D | null)}
+    >
       {obj.type === 'floor' && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[obj.size, obj.size]} />
@@ -36,23 +47,7 @@ export function SceneObjectMesh({ obj, selected, live, onPointerDown }: Props) {
       )}
 
       {obj.type === 'target' && (
-        <group>
-          <mesh castShadow>
-            <sphereGeometry args={[obj.radius, 32, 32]} />
-            <meshStandardMaterial
-              color={obj.color}
-              emissive={obj.color}
-              emissiveIntensity={0.6}
-              roughness={0.3}
-            />
-            {selected && <Edges color="#ffd24d" />}
-          </mesh>
-          {/* ground marker ring so the target is readable from any angle */}
-          <mesh position={[0, 0.02 - obj.position[1], 0]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[obj.radius * 1.25, obj.radius * 1.55, 48]} />
-            <meshBasicMaterial color={obj.color} transparent opacity={0.5} />
-          </mesh>
-        </group>
+        <TargetMesh obj={obj} selected={selected} y={mirrored ? live!.pos[1] : obj.position[1]} />
       )}
 
       {(obj.type === 'cube' || obj.type === 'sphere' || obj.type === 'capsule') && (
@@ -66,6 +61,36 @@ export function SceneObjectMesh({ obj, selected, live, onPointerDown }: Props) {
           {selected && <Edges color="#ffd24d" />}
         </mesh>
       )}
+    </group>
+  )
+}
+
+/** Target = glowing sphere + a ground ring marker that stays on the floor. */
+function TargetMesh({
+  obj,
+  selected,
+  y,
+}: {
+  obj: SceneObject
+  selected: boolean
+  y: number
+}) {
+  return (
+    <group>
+      <mesh castShadow>
+        <sphereGeometry args={[obj.radius, 32, 32]} />
+        <meshStandardMaterial
+          color={obj.color}
+          emissive={obj.color}
+          emissiveIntensity={0.6}
+          roughness={0.3}
+        />
+        {selected && <Edges color="#ffd24d" />}
+      </mesh>
+      <mesh position={[0, 0.02 - y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[obj.radius * 1.25, obj.radius * 1.55, 48]} />
+        <meshBasicMaterial color={obj.color} transparent opacity={0.5} />
+      </mesh>
     </group>
   )
 }
