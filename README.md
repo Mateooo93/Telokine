@@ -1,8 +1,10 @@
 # Telokine
 
-train a robot without writing code. build stuff in 3d, connect motors, drag reward blocks, hit train, watch it learn
+in this project you can uild 3d agents using the simple playground i made, this is interesting if you want to learn about AI reenforcement learning without having to know how to code.
+multiple features are available aswell as a tutorial of you need help! Have fun!
 
-demo (ui only): https://mateooo93.github.io/Telokine/ — use **Simulate train** for a browser-only fake run  
+This was coded in python by me and with the help of AI for the training/CUDA part which i didn't really know how to do (:
+demo (ui only): https://mateooo93.github.io/Telokine/  
 code: https://github.com/Mateooo93/Telokine
 
 ![screenshot](docs/screenshot-walker.png)
@@ -18,21 +20,13 @@ npm run dev
 
 ```bash
 cd backend
-uv sync --extra ml
+uv sync
 uv run uvicorn telokine.server:app --port 8000
-```
-
-`--extra ml` installs MuJoCo, PyTorch, and Stable-Baselines3 for training. Without it you'll get `No module named 'stable_baselines3'`.
-
-training is heavy (4 parallel sims + optional GPU). if your browser or pc struggles, lower the Budget slider or run with fewer parallel envs:
-
-```bash
-TELOKINE_N_ENVS=2 TELOKINE_DEVICE=cpu uv run uvicorn telokine.server:app --port 8000
 ```
 
 open http://localhost:1420, load the walker template, hit train then run trained
 
-no gpu needed it falls back to cpu
+no gpu needed it falls back to your cpu
 
 ## quick tips
 
