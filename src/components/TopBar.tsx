@@ -44,11 +44,7 @@ export function TopBar() {
     }
     const scene = serializeScene(objects)
     if (onPages && policyName === DEMO_POLICY_NAME) {
-      startDemoRun(scene, {
-        rewards: rewardPayload(blocks),
-        episodeLength,
-        actionPower,
-      }).catch((e: unknown) => {
+      startDemoRun().catch((e: unknown) => {
         useRunStore.getState().setError(e instanceof Error ? e.message : String(e))
       })
       return
@@ -64,7 +60,6 @@ export function TopBar() {
       stopTraining()
       return
     }
-    useTrainingStore.getState().reset()
     startTrain(serializeScene(objects), {
       totalTimesteps,
       rewards: rewardPayload(blocks),
@@ -82,13 +77,7 @@ export function TopBar() {
       stopTraining()
       return
     }
-    startDemoTrain(serializeScene(objects), {
-      totalTimesteps,
-      rewards: rewardPayload(blocks),
-      episodeLength,
-      actionPower,
-      curriculum,
-    }).catch((e: unknown) => {
+    startDemoTrain().catch((e: unknown) => {
       useTrainingStore.getState().setError(e instanceof Error ? e.message : String(e))
     })
   }
@@ -132,7 +121,7 @@ export function TopBar() {
         <span className="agent-hint">Add a Cube or a starter robot to begin</span>
       )}
       {onPages && hasAgent && !running && !training && (
-        <span className="agent-hint">Demo mode — Simulate train runs in your browser only</span>
+        <span className="agent-hint">Demo mode — Simulate train replays a real MuJoCo walker session</span>
       )}
       {!onPages && !hasAgent && !running && !training && (
         <span className="agent-hint">Add a Cube or a starter robot to begin</span>

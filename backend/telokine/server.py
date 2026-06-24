@@ -328,7 +328,9 @@ def _run_train(
             model_id=model_id,
         )
     except Exception as exc:  # noqa: BLE001
-        emit({"type": "error", "message": str(exc)})
+        import traceback
+
+        emit({"type": "error", "message": f"{exc}\n{traceback.format_exc()[-800:]}"})
     finally:
         emit({"type": "finished"})
 

@@ -162,6 +162,11 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
 
     def step(self, action):
         action = np.clip(np.asarray(action, dtype=np.float64).reshape(-1), -1.0, 1.0)
+        if action.size < self.act_dim:
+            raise ValueError(
+                f"action has {action.size} values but this build expects {self.act_dim} "
+                f"({'motor torques' if self.has_motors else 'body forces'})"
+            )
 
         if self.has_motors:
             # The policy commands the motors only. The body never gets a free

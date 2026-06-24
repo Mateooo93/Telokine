@@ -9,6 +9,7 @@ import {
   type Vec3,
 } from '../viewport/types'
 import { useTrainingStore } from './useTrainingStore'
+import { walkerDemoTarget, walkerDemoTemplate } from '../data/walkerDemoScene'
 
 /** A trained policy is tied to the exact scene it learned on. Once the build
  * changes shape (parts added/removed/assembled), that policy no longer applies,
@@ -61,7 +62,7 @@ interface SceneState {
   loadBuild: () => boolean
 }
 
-const INITIAL_SCENE: SceneObject[] = [...walkerTemplate(), createObject('target', [4, 0.5, 0])]
+const INITIAL_SCENE: SceneObject[] = [...walkerDemoTemplate(), walkerDemoTarget()]
 
 const BUILD_STORAGE_KEY = 'telokine-build-v1'
 
@@ -432,21 +433,7 @@ function roverTemplate(): SceneObject[] {
 
 // Walker: a torso (the agent) with two powered legs that swing about Z.
 function walkerTemplate(): SceneObject[] {
-  const body = createObject('cube', [-2, 1.05, 0])
-  body.role = 'agent'
-  body.dimensions = [1.1, 0.42, 0.6]
-  body.color = '#c9933f'
-
-  const mkLeg = (z: number, sign: number): SceneObject[] => {
-    const leg = createObject('beam', [-2, 0.5, z])
-    leg.dimensions = [0.24, 1.1, 0.24]
-    leg.color = '#b9c0c3'
-    leg.rotation = [0, 0, sign * 0.35]
-    const motor = connector('motor', body, leg, [-2, 0.84, z], [0, 0, 1])
-    motor.motorStrength = 4
-    return [leg, motor]
-  }
-  return [body, ...mkLeg(-0.36, 1), ...mkLeg(0.36, -1)]
+  return walkerDemoTemplate()
 }
 
 // Arm: a heavy base (the agent) carrying a powered link with a sensor tip.

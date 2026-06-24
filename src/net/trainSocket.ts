@@ -43,9 +43,11 @@ function handleMessage(ev: MessageEvent) {
       // Two `started` messages arrive: the server's (carries model_id) and the
       // training callback's (no model_id). Only the former should set the name,
       // otherwise we'd wipe it and Run would fall back to plain physics.
-      if (msg.model_id) currentModelId = msg.model_id as string
-      train.onStarted((msg.total_timesteps as number) ?? 0)
-      run.setRunning(true) // mirror mode on, for preview frames
+      if (msg.model_id) {
+        currentModelId = msg.model_id as string
+        train.onStarted((msg.total_timesteps as number) ?? 0)
+        run.setRunning(true)
+      }
       break
     }
     case 'telemetry':
@@ -68,6 +70,8 @@ function handleMessage(ev: MessageEvent) {
       break
     case 'preview_end':
       train.onPreview(null)
+      run.setRunning(false)
+      run.clear()
       break
     case 'frame':
       if (!run.running) run.setRunning(true)
@@ -77,6 +81,8 @@ function handleMessage(ev: MessageEvent) {
       // Trained policy saved. Remember its name so Run can use it.
       train.onDone()
       if (currentModelId) useTrainingStore.setState({ policyName: currentModelId })
+      run.setRunning(false)
+      run.clear()
       break
     case 'error':
       train.setError(String(msg.message ?? 'training error'))
@@ -147,6 +153,9 @@ export async function startTrain(
     curriculum?: number
   } = {},
 ): Promise<void> {
+  useTrainingStore.getState().reset()
+  useTrainingStore.getState().onStarted(opts.totalTimesteps ?? 150_000)
+  useRunStore.getState().setRunning(true)
   useTrainingStore.getState().setError(null)
   await connectTrain()
   if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Train socket not open')

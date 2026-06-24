@@ -323,7 +323,7 @@ export function Viewport() {
             canAttachTo(obj) &&
             (hoverHit?.id === obj.id || placementDraft?.fromId === obj.id)
           }
-          live={transforms[obj.id]}
+          live={running ? transforms[obj.id] : undefined}
           onReady={registerObject}
           onPointerDown={handleObjectDown(obj.id)}
           onPointerMove={handleObjectMove(obj.id)}

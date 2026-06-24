@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "capture-demo": "cd backend && TELOKINE_DEVICE=cpu TELOKINE_N_ENVS=4 uv run python scripts/capture_walker_demo.py",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
