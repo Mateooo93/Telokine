@@ -14,6 +14,7 @@ export function TrainingOverlay() {
   const elapsed = useTrainingStore((s) => s.elapsed)
   const error = useTrainingStore((s) => s.error)
   const policyName = useTrainingStore((s) => s.policyName)
+  const previewEpisode = useTrainingStore((s) => s.previewEpisode)
 
   if (status === 'idle' && !error) return null
 
@@ -29,11 +30,14 @@ export function TrainingOverlay() {
             <b>Training…</b>
             <span className="muted">{Math.round(progress * 100)}%</span>
             <span className="muted">· {elapsed.toFixed(0)}s</span>
-            <span className="muted">· {episodes} episodes</span>
+            <span className="muted">· {episodes} tries</span>
             <button className="btn mini danger" onClick={stopTrain}>
               Stop
             </button>
           </>
+        )}
+        {status === 'training' && previewEpisode != null && (
+          <span className="preview-chip">▶ Watching checkpoint · {previewEpisode} tries</span>
         )}
         {status === 'done' && (
           <>

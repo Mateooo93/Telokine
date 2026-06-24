@@ -4,6 +4,7 @@ import { useTrainingStore } from '../store/useTrainingStore'
 import { startRun, stopRun } from '../net/simSocket'
 import { startTrain, stopTrain } from '../net/trainSocket'
 import { serializeScene } from '../viewport/types'
+import { rewardPayload, useProgramStore } from '../store/useProgramStore'
 
 export function TopBar() {
   const running = useRunStore((s) => s.running)
@@ -16,10 +17,17 @@ export function TopBar() {
   const training = useTrainingStore((s) => s.status === 'training')
   const trainError = useTrainingStore((s) => s.error)
   const policyName = useTrainingStore((s) => s.policyName)
+  const blocks = useProgramStore((s) => s.blocks)
+  const totalTimesteps = useProgramStore((s) => s.totalTimesteps)
+  const episodeLength = useProgramStore((s) => s.episodeLength)
+  const actionPower = useProgramStore((s) => s.actionPower)
+  const curriculum = useProgramStore((s) => s.curriculum)
 
   const hasAgent = objects.some((o) => o.role === 'agent')
+  // A build can only move through motors. Wheels/parts alone are dead weight
+  // until a Motor drives them — warn so people don't train a thing that can't move.
+  const hasMotor = objects.some((o) => o.type === 'motor')
   const toolsEnabled = !running && !training && !!selectedId
-  const busy = running || training
 
   const handleRun = () => {
     if (running) {
@@ -37,7 +45,13 @@ export function TopBar() {
       return
     }
     useTrainingStore.getState().reset()
-    startTrain(serializeScene(objects)).catch((e: unknown) => {
+    startTrain(serializeScene(objects), {
+      totalTimesteps,
+      rewards: rewardPayload(blocks),
+      episodeLength,
+      actionPower,
+      curriculum,
+    }).catch((e: unknown) => {
       useTrainingStore.getState().setError(e instanceof Error ? e.message : String(e))
     })
   }
@@ -52,7 +66,8 @@ export function TopBar() {
   return (
     <div className="topbar">
       <div className="brand">
-        Telokine<span className="dot">.</span>
+        <span className="brand-mark" aria-hidden />
+        <span className="brand-name">Telokine</span>
       </div>
 
       <div className="toolgroup">
@@ -75,8 +90,12 @@ export function TopBar() {
       </div>
 
       <div className="spacer" />
-      {(runError || trainError) && (
-        <span className="err">{trainError ?? runError}</span>
+      {(runError || trainError) && <span className="err">{trainError ?? runError}</span>}
+      {!hasAgent && !running && !training && (
+        <span className="agent-hint">Add a Cube or a starter robot to begin</span>
+      )}
+      {hasAgent && !hasMotor && !running && !training && (
+        <span className="agent-hint">No motors yet — add a Motor (and a wheel/part) so your agent can actually move</span>
       )}
       <button
         className={`btn run ${running ? 'stop' : ''}`}

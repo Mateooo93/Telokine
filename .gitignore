@@ -15,6 +15,7 @@ build/
 
 # generated training artifacts
 backend/policies/
+backend/MUJOCO_LOG.TXT
 
 # editor / os
 .DS_Store

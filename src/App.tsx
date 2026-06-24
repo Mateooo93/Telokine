@@ -4,6 +4,7 @@ import { TopBar } from './components/TopBar'
 import { Inspector } from './components/Inspector'
 import { TrainingOverlay } from './components/TrainingOverlay'
 import { Viewport } from './viewport/Viewport'
+import { BlockCanvas } from './components/BlockCanvas'
 
 export default function App() {
   return (
@@ -11,10 +12,13 @@ export default function App() {
       <TopBar />
       <div className="main">
         <Palette />
-        <div className="viewport">
-          <Viewport />
-          <StatusBar />
-          <TrainingOverlay />
+        <div className="workspace">
+          <div className="viewport">
+            <Viewport />
+            <StatusBar />
+            <TrainingOverlay />
+          </div>
+          <BlockCanvas />
         </div>
         <Inspector />
       </div>

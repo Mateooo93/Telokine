@@ -6,9 +6,12 @@ is how the scene + blocks become a learnable problem.
 
 Observation (12-d):
     [ rel_target(3), linear_vel(3), angular_vel(3), up_vector(3) ]
-Action (6-d), continuous in [-1, 1]:
-    [ force_x, force_y, force_z, torque_x, torque_y, torque_z ]
-    scaled by MAX_FORCE / MAX_TORQUE and applied to the agent body each step.
+Action, continuous in [-1, 1]:
+    * build WITH motors -> one channel per motor actuator (joint torques), like
+      a real robot/rover. The body is never pushed directly.
+    * build WITHOUT motors -> the classic 6-D body thruster
+      [ force_x, force_y, force_z, torque_x, torque_y, torque_z ] applied to the
+      agent body, so a bare cube can still be trained to reach the target.
 
 The default reward here is a stand-in (approach + reach bonus + exertion). Step
 5 swaps it for the user's reward-block config without changing anything else.
@@ -19,6 +22,7 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
+from telokine.reward import compile_blocks, evaluate
 from telokine.sim import build_mjcf
 
 try:  # gymnasium.Env lives in gymnasium.envs (re-exported as gym.Env)
@@ -46,7 +50,7 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
     OBS_DIM = 12
     ACT_DIM = 6
 
-    def __init__(self, scene: dict, seed: int | None = None) -> None:
+    def __init__(self, scene: dict, rewards: list[dict] | None = None, seed: int | None = None) -> None:
         # gymnasium.Env isn't always importable in type-check; call super safely.
         try:
             super().__init__()
@@ -54,6 +58,13 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
             pass
 
         self.scene = scene
+        self._reward_blocks = compile_blocks(rewards or [])
+        training_cfg = scene.get("training", {})
+        action_power = training_cfg.get("action_power") or 1.0
+        episode_length = training_cfg.get("episode_length") or self.MAX_STEPS
+        self.max_force = self.MAX_FORCE * float(action_power)
+        self.max_torque = self.MAX_TORQUE * float(action_power)
+        self.max_steps = int(episode_length)
         self._np_rng = np.random.default_rng(seed)
 
         xml = build_mjcf(scene, lift_agent=False)
@@ -76,15 +87,27 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
         )
         self._target_pos = np.array(self._target_world_pos(), dtype=np.float64)
 
+        # How the agent is actuated. Real robots (and every standard MuJoCo RL
+        # env like Ant/Humanoid) move ONLY through their actuators — joint
+        # torques that drive wheels/legs against the ground. There is no magic
+        # body force: a build with no motors has nothing to actuate and so it
+        # cannot move on its own. We still expose a 1-D dummy action when there
+        # are no motors purely to keep the RL action space valid; it drives
+        # nothing. Add a Motor (and a wheel/part for it to turn) to make it move.
+        self._n_motors = int(self.model.nu)
+        self.has_motors = self._n_motors > 0
+        self.act_dim = self._n_motors if self.has_motors else 1
+
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self.OBS_DIM,), dtype=np.float32
         )
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(self.ACT_DIM,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(self.act_dim,), dtype=np.float32
         )
 
         self._step = 0
         self._prev_dist = 0.0
+        self._prev_x = 0.0
 
     # ------------------------------------------------------------------
     # scene helpers
@@ -128,6 +151,7 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
         mujoco.mj_forward(self.model, self.data)
         self._step = 0
         self._prev_dist = self._dist_to_target()
+        self._prev_x = float(self.data.body(self._agent_bid).xpos[0])
         return self._obs(), {}
 
     def frame(self) -> list[dict]:
@@ -143,13 +167,13 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
 
     def step(self, action):
         action = np.clip(np.asarray(action, dtype=np.float64).reshape(-1), -1.0, 1.0)
-        force = action[:3] * self.MAX_FORCE
-        torque = action[3:] * self.MAX_TORQUE
 
-        # xfrc_applied is [fx, fy, fz, tx, ty, tz] per body, world frame.
-        xfrc = self.data.xfrc_applied[self._agent_bid]
-        xfrc[0], xfrc[1], xfrc[2] = force[0], force[1], force[2]
-        xfrc[3], xfrc[4], xfrc[5] = torque[0], torque[1], torque[2]
+        if self.has_motors:
+            # The policy commands the motors only. The body never gets a free
+            # push, so it moves solely by driving its joints, like a real robot.
+            self.data.ctrl[:] = action[: self._n_motors]
+        # No motors: nothing to actuate. The dummy action drives nothing, so the
+        # agent stays put — a bare rigid body cannot locomote on its own.
 
         for _ in range(self.SUBSTEPS):
             mujoco.mj_step(self.model, self.data)
@@ -159,17 +183,26 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
         reached = dist < self.REACH_RADIUS
         pos = self.data.body(self._agent_bid).xpos
         oob = abs(float(pos[0])) > self.OUT_OF_BOUNDS or abs(float(pos[2])) > self.OUT_OF_BOUNDS
+        upright = self._upright()
 
-        # Default reward (step 5 replaces this with the user's block config):
-        # reward progress toward the target, penalize flailing, bonus on reach.
         progress = self._prev_dist - dist
-        exertion = -0.001 * float(np.sum(np.square(action)))
-        reach_bonus = 10.0 if reached else 0.0
-        reward = float(0.5 * progress + exertion + reach_bonus)
+        forward_delta = float(pos[0]) - self._prev_x
+        state = {
+            "distance": float(dist),
+            "progress": float(progress),
+            "reached": bool(reached),
+            "out_of_bounds": bool(oob),
+            "upright": float(upright),
+            "fallen": bool(upright < 0.25 or float(pos[1]) < 0.2),
+            "forward_delta": forward_delta,
+            "action_energy": float(np.sum(np.square(action[: self._n_motors]))) if self.has_motors else 0.0,
+        }
+        reward = evaluate(self._reward_blocks, state)
         self._prev_dist = dist
+        self._prev_x = float(pos[0])
 
         terminated = bool(reached or oob)
-        truncated = self._step >= self.MAX_STEPS
+        truncated = self._step >= self.max_steps
         info = {
             "distance": float(dist),
             "reached": bool(reached),
@@ -198,3 +231,8 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
     def _dist_to_target(self) -> float:
         pos = np.asarray(self.data.body(self._agent_bid).xpos, dtype=np.float64)
         return float(np.linalg.norm(self._target_pos - pos))
+
+    def _upright(self) -> float:
+        b = self.data.body(self._agent_bid)
+        xmat = b.xmat
+        return float(max(0.0, min(1.0, xmat[4])))

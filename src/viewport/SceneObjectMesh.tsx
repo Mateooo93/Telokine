@@ -1,18 +1,118 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Edges } from '@react-three/drei'
 import { type ThreeEvent } from '@react-three/fiber'
-import type * as THREE from 'three'
-import type { SceneObject } from './types'
+import * as THREE from 'three'
+import type { ObjectType, SceneObject, Vec3 } from './types'
 import type { Transform } from '../store/useRunStore'
+
+const UP = new THREE.Vector3(0, 1, 0)
+
+/** Quaternion that points the local +Y axis along the given world direction. */
+function useAxisQuaternion(axis: Vec3): THREE.Quaternion {
+  return useMemo(() => {
+    const dir = new THREE.Vector3(axis[0], axis[1], axis[2])
+    if (dir.lengthSq() < 1e-8) dir.set(0, 1, 0)
+    dir.normalize()
+    return new THREE.Quaternion().setFromUnitVectors(UP, dir)
+  }, [axis[0], axis[1], axis[2]])
+}
+
+/**
+ * The shared look for connectors (motor / joint / sensor), oriented along the
+ * spin axis. Used both for placed parts and for the translucent placement
+ * ghost, so the preview matches exactly what you get.
+ */
+export function ConnectorShape({
+  kind,
+  axis,
+  radius,
+  size,
+  color,
+  ghost = false,
+  selected = false,
+}: {
+  kind: Extract<ObjectType, 'motor' | 'joint' | 'sensor'>
+  axis: Vec3
+  radius: number
+  size: number
+  color: string
+  ghost?: boolean
+  selected?: boolean
+}) {
+  const quat = useAxisQuaternion(axis)
+  const opacity = ghost ? 0.45 : 1
+  const housing = size * 1.7
+
+  if (kind === 'sensor') {
+    return (
+      <group>
+        <mesh castShadow={!ghost}>
+          <sphereGeometry args={[radius, 28, 28]} />
+          <meshStandardMaterial
+            color={color}
+            emissive={color}
+            emissiveIntensity={ghost ? 0.3 : 0.55}
+            roughness={0.3}
+            transparent={ghost}
+            opacity={opacity}
+            depthWrite={!ghost}
+          />
+          {selected && <Edges color="#ffd24d" />}
+        </mesh>
+        <mesh quaternion={quat}>
+          <torusGeometry args={[radius * 1.5, radius * 0.12, 10, 32]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} transparent opacity={opacity * 0.8} depthWrite={false} />
+        </mesh>
+      </group>
+    )
+  }
+
+  // motor / joint: a hub on an axle. The motor reads as a chunky housing; the
+  // joint as a slim pivot pin. Both clearly show the rotation axis.
+  return (
+    <group quaternion={quat}>
+      <mesh castShadow={!ghost}>
+        <cylinderGeometry args={[radius, radius, housing, 28]} />
+        <meshStandardMaterial
+          color={color}
+          metalness={kind === 'motor' ? 0.55 : 0.4}
+          roughness={0.4}
+          transparent={ghost}
+          opacity={opacity}
+          depthWrite={!ghost}
+        />
+        {selected && <Edges color="#ffd24d" />}
+      </mesh>
+      {kind === 'motor' && (
+        <>
+          {[-1, 1].map((s) => (
+            <mesh key={s} position={[0, (housing / 2) * s, 0]}>
+              <cylinderGeometry args={[radius * 1.04, radius * 1.04, housing * 0.16, 28]} />
+              <meshStandardMaterial color="#1b1e20" metalness={0.6} roughness={0.5} transparent={ghost} opacity={opacity} depthWrite={!ghost} />
+            </mesh>
+          ))}
+        </>
+      )}
+      <mesh>
+        <cylinderGeometry args={[radius * 0.26, radius * 0.26, housing * 1.9, 16]} />
+        <meshStandardMaterial color="#e6cf95" metalness={0.7} roughness={0.3} transparent={ghost} opacity={opacity} depthWrite={!ghost} />
+      </mesh>
+    </group>
+  )
+}
 
 interface Props {
   obj: SceneObject
   selected: boolean
+  /** Highlighted as a valid attach target while a connector tool is active. */
+  attachTarget?: boolean
   /** When a run is active, the live physics transform overrides the editor pose. */
   live?: Transform
   /** Stable callback (useCallback) registering this group on mount, null on unmount. */
   onReady: (id: string, group: THREE.Object3D | null) => void
   onPointerDown: (e: ThreeEvent<PointerEvent>) => void
+  onPointerMove?: (e: ThreeEvent<PointerEvent>) => void
+  onPointerOut?: (e: ThreeEvent<PointerEvent>) => void
 }
 
 /**
@@ -30,9 +130,10 @@ interface Props {
  * - Run mode: pose from the streamed live transform (position + quaternion).
  *   Floor is excluded from mirroring (its mesh bakes a local -90° rotation).
  */
-export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }: Props) {
+export function SceneObjectMesh({ obj, selected, attachTarget = false, live, onReady, onPointerDown, onPointerMove, onPointerOut }: Props) {
   const isFloor = obj.type === 'floor'
   const mirrored = !!live && !isFloor
+  const outline = selected ? '#ffd24d' : attachTarget ? '#76d7a8' : null
 
   const groupRef = useRef<THREE.Group>(null)
 
@@ -58,12 +159,12 @@ export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }:
   }, [obj.id, onReady])
 
   return (
-    <group ref={groupRef} onPointerDown={onPointerDown}>
+    <group ref={groupRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerOut={onPointerOut}>
       {obj.type === 'floor' && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[obj.size, obj.size]} />
           <meshStandardMaterial color={obj.color} roughness={1} />
-          {selected && <Edges color="#ffd24d" />}
+          {outline && <Edges color={outline} />}
         </mesh>
       )}
 
@@ -71,9 +172,9 @@ export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }:
         <TargetMesh obj={obj} selected={selected} y={mirrored ? live!.pos[1] : obj.position[1]} />
       )}
 
-      {(obj.type === 'cube' || obj.type === 'sphere' || obj.type === 'capsule') && (
+      {(obj.type === 'cube' || obj.type === 'sphere' || obj.type === 'capsule' || obj.type === 'beam') && (
         <mesh castShadow receiveShadow>
-          {obj.type === 'cube' && (
+          {(obj.type === 'cube' || obj.type === 'beam') && (
             <boxGeometry args={[obj.dimensions[0], obj.dimensions[1], obj.dimensions[2]]} />
           )}
           {obj.type === 'sphere' && <sphereGeometry args={[obj.radius, 32, 32]} />}
@@ -81,8 +182,28 @@ export function SceneObjectMesh({ obj, selected, live, onReady, onPointerDown }:
             <capsuleGeometry args={[obj.radius * 0.5, obj.size, 12, 24]} />
           )}
           <meshStandardMaterial color={obj.color} roughness={0.5} metalness={0.1} />
-          {selected && <Edges color="#ffd24d" />}
+          {outline && <Edges color={outline} />}
         </mesh>
+      )}
+
+      {obj.type === 'wheel' && (
+        // Spin axis is local Z, so a wheel with no rotation rolls toward +X.
+        <mesh castShadow receiveShadow rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[obj.radius, obj.radius, obj.size, 40]} />
+          <meshStandardMaterial color={obj.color} roughness={0.65} metalness={0.15} />
+          {outline && <Edges color={outline} />}
+        </mesh>
+      )}
+
+      {(obj.type === 'joint' || obj.type === 'motor' || obj.type === 'sensor') && (
+        <ConnectorShape
+          kind={obj.type}
+          axis={obj.axis}
+          radius={obj.radius}
+          size={obj.size}
+          color={obj.color}
+          selected={selected}
+        />
       )}
     </group>
   )

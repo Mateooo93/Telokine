@@ -1,97 +1,191 @@
 # Telokine
 
-A visual AI training sandbox. Build a creature, define goals with blocks, press
-**Train**, and watch intelligence emerge through trial and error — without ever
-seeing the words *tensor*, *neural network*, or *gradient descent*.
+**Build a robot. Define goals with blocks. Press Train. Watch it learn.**
 
-The goal isn't the most powerful AI training system. It's the **easiest** one.
-If a researcher thinks "this is too simple" and a beginner thinks "I can build
-something with this in five minutes," we've succeeded.
+Telokine is a visual AI training sandbox — a 3D playground where you assemble creatures from cubes, wheels, and motors, wire up reward logic with draggable blocks, and train a policy with reinforcement learning. No tensors, no code, no jargon: just build, connect, train, and run.
 
----
+**Live UI demo:** [https://mateooo93.github.io/Telokine/](https://mateooo93.github.io/Telokine/)
 
-## The three layers
-
-| Layer | What it is | Tech |
-|-------|-----------|------|
-| **1. Visual** | Everything the user touches: 3D viewport, block editor, graphs, buttons | React + Vite + TypeScript + React Three Fiber (Three.js), in a Tauri desktop shell |
-| **2. Simulation** | Gravity, collisions, movement, joints, balance — invisible to the user | Python + **MuJoCo**, behind a Gymnasium interface |
-| **3. Learning** | Neural networks, PPO, GPU training — barely visible | Python + **Stable-Baselines3** (PyTorch, GPU) over a FastAPI/WebSocket bridge |
-
-The user's innovation surface is Layer 1. Layers 2 and 3 are solved problems we
-stand on, not reinvent.
-
-## Status — step 1 of 14
-
-- [x] **3D viewport** — floor, cube agent, target sphere, orbit/zoom, add & drag
-      objects, selection. (this release)
-- [ ] Physics simulation
-- [ ] Cube agent
-- [ ] Training backend
-- [ ] Reward blocks
-- [ ] Train button
-- [ ] Progress graphs
-- [ ] Save/load projects
-- [ ] Creature builder → joints → templates → humanoids → sharing → marketplace
-
-Full breakdown: [`docs/ROADMAP.md`](docs/ROADMAP.md).
-Architecture & data flow: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+> The hosted demo is the frontend only. Physics and training require the Python backend running locally (see below).
 
 ---
 
-## Run the frontend (the app)
+## What you can do
+
+| Step | What happens |
+|------|----------------|
+| **Build** | Drop cubes, beams, wheels, floors, and targets. Load starter robots (Rover, Walker, Arm). |
+| **Connect** | Attach motors and joints between parts — click a surface, pick a second part, and the build snaps together. |
+| **Program** | Compose reward/penalty blocks in a node canvas (approach target, stay upright, exertion, …). |
+| **Train** | PPO learns from your scene and blocks. Every ~10 tries you see a checkpoint preview in the viewport. |
+| **Run** | Replay the trained policy and watch the agent reach the goal. |
+
+Movement is **motor-driven only** — like a real robot. A bare cube with no motors cannot locomote; add a **Motor** (and something for it to drive, e.g. a wheel) so the agent can move and learn.
+
+---
+
+## Screenshots
+
+The 3D viewport shows your build in real time. Starter templates (Rover, Walker, Arm) ship pre-wired with motors and targets so you can train immediately.
+
+---
+
+## Architecture
+
+Three layers, one product:
+
+| Layer | Role | Stack |
+|-------|------|--------|
+| **Visual** | Editor, viewport, blocks, graphs, buttons | React · Vite · TypeScript · React Three Fiber · Zustand · XYFlow |
+| **Simulation** | Gravity, collisions, kinematic tree, MuJoCo MJCF | Python · **MuJoCo** · Gymnasium |
+| **Learning** | PPO training, policy rollouts, telemetry | Python · **Stable-Baselines3** · FastAPI · WebSockets |
+
+```
+Browser (React)  ←—— WebSocket ——→  FastAPI server
+       │                                    │
+       │                              MuJoCo sim + PPO
+       └──── 3D viewport mirrors live frames from backend
+```
+
+**WebSocket channels**
+
+- `/ws/sim` — physics rollout or trained-policy playback (Run button)
+- `/ws/train` — training control, reward telemetry, checkpoint preview frames
+
+---
+
+## Quick start (full app)
+
+### 1. Frontend
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open <http://localhost:1420>. You'll see the 3D editor: a cube agent, an orange
-target, an object palette on the left, and the (disabled) **Train** button.
+Open [http://localhost:1420](http://localhost:1420).
 
-> The viewport runs in the browser during development. The Tauri desktop shell
-> wraps this exact frontend — see **Desktop window (Tauri)** below to enable it.
-
-## Run the backend (simulation + learning)
+### 2. Backend (simulation + training)
 
 ```bash
 cd backend
-uv sync                                              # creates .venv + installs deps
+uv sync
 uv run uvicorn telokine.server:app --reload --port 8000
 ```
 
-The backend is a structural scaffold right now (steps 2-6 wire up the real
-physics and training). Health check: <http://localhost:8000/health>.
+Health check: [http://localhost:8000/health](http://localhost:8000/health)
 
----
+With the backend running, **Train** and **Run** stream live physics into the viewport.
 
-## Desktop window (Tauri)
-
-You chose Tauri for the app shell. Its Linux system libraries aren't installed
-yet, so the native window is one command away. Install them, then scaffold the
-Rust shell around this frontend:
+### 3. Production build (single server)
 
 ```bash
-sudo apt install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-                    libayatana-appindicator3-dev libssl-dev
-npm create tauri-app@latest   # point it at ./  , Vite, port 1420 — see docs
+npm run build
+cd backend && uv run uvicorn telokine.server:app --port 8000
 ```
 
-Because the frontend is already on port 1420 (Tauri's convention) and built with
-Vite, enabling the desktop window requires **zero frontend changes**.
+The backend serves the built SPA from `dist/` on the same origin — no CORS setup needed.
 
 ---
 
-## Layout
+## Project layout
 
 ```
 Telokine/
-  src/                 # Layer 1 — the app (React + Three.js)
-    viewport/          # 3D scene, object meshes, camera
-    components/        # top bar, palette, status bar
-    store/             # zustand scene store (single source of truth)
-  backend/             # Layers 2 & 3 — Python sim + RL
-  docs/
-    ARCHITECTURE.md
-    ROADMAP.md
+├── src/                    # React app
+│   ├── viewport/           # Three.js scene, meshes, placement
+│   ├── components/         # Palette, Inspector, BlockCanvas, TopBar, …
+│   ├── store/              # Zustand: scene, training, program blocks
+│   └── net/                # WebSocket clients (sim + train)
+├── backend/
+│   └── telokine/
+│       ├── sim.py          # Scene → MuJoCo MJCF, kinematic tree, motors
+│       ├── env.py          # Gymnasium env (observations, motor actions)
+│       ├── train.py        # PPO loop, telemetry, checkpoint previews
+│       ├── reward.py       # Reward block compiler
+│       └── server.py       # FastAPI + WebSockets
+└── docs/
+    ├── ARCHITECTURE.md
+    └── ROADMAP.md
 ```
+
+---
+
+## Reward blocks
+
+Blocks in the **Reward Program** canvas compile into per-step rewards for PPO:
+
+**Rewards:** Approach Target · Reach Target · Stay Upright · Move Forward  
+**Penalties:** Fall · Touch Wall · Move Backward · Exertion  
+
+Each weighted block maps to a term in `backend/telokine/reward.py`. Templates (**Reach**, **Upright**, **Efficient**) preload sensible defaults.
+
+**Training setup**
+
+| Control | Meaning |
+|---------|---------|
+| **Budget** | Total practice steps — more training, smarter behavior |
+| **Episode** | Steps per try before reset |
+| **Action power** | Motor strength multiplier |
+| **Curriculum** | Easier early tries, ramp to full difficulty (0 = no ramp) |
+
+---
+
+## Starter robots
+
+| Template | Description |
+|----------|-------------|
+| **Rover** | Chassis + four wheel motors |
+| **Walker** | Legged biped with hip/knee motors |
+| **Arm** | Manipulator with joint chain |
+
+Load from the left palette under **Starter robots**. Each template sets the primary body as the **agent** and keeps your target/floor objects.
+
+---
+
+## Connecting parts
+
+1. Choose **Motor** or **Joint** in the palette.  
+2. Click a face on **Part A** (anchor).  
+3. Click **Part B** — it snaps flush to the connector.  
+4. Tune axis and weight in the Inspector; use **Snap Part B to touch** if needed.
+
+Motors become MuJoCo actuators during training; the policy outputs torques on those joints only.
+
+---
+
+## Tech requirements
+
+**Frontend:** Node 20+, npm  
+**Backend:** Python 3.12+, [uv](https://github.com/astral-sh/uv), MuJoCo, PyTorch (CPU or CUDA)
+
+Backend tests:
+
+```bash
+cd backend && uv run pytest tests/ -q
+```
+
+---
+
+## Roadmap
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full step list. Recent milestones:
+
+- [x] 3D viewport, selection, gizmos  
+- [x] MuJoCo physics + kinematic assembly tree  
+- [x] Motor actuators + realistic locomotion (no magic body force)  
+- [x] PPO training + live checkpoint previews  
+- [x] Visual reward block editor  
+- [ ] Save/load projects  
+- [ ] Tauri desktop shell  
+- [ ] Sharing & marketplace  
+
+---
+
+## License
+
+MIT — use it, fork it, teach with it.
+
+---
+
+Built by [@Mateooo93](https://github.com/Mateooo93).

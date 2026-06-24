@@ -32,17 +32,17 @@ except Exception:  # pragma: no cover
         """Placeholder when SB3 isn't installed."""
 
 
-def _env_fn(scene: dict, rank: int, base_seed: int):
+def _env_fn(scene: dict, rewards: list[dict], rank: int, base_seed: int):
     """Top-level env factory (picklable) — required for the spawn start method."""
     from stable_baselines3.common.monitor import Monitor
     from stable_baselines3.common.utils import set_random_seed
     from telokine.env import CubeAgentEnv
 
     set_random_seed(base_seed + rank)
-    return Monitor(CubeAgentEnv(scene, seed=base_seed + rank))
+    return Monitor(CubeAgentEnv(scene, rewards=rewards, seed=base_seed + rank))
 
 
-def _make_vec_env(scene: dict, n_envs: int, base_seed: int):
+def _make_vec_env(scene: dict, rewards: list[dict], n_envs: int, base_seed: int):
     """Build a vectorized env: n parallel CubeAgentEnv instances.
 
     Uses the ``spawn`` start method (not the default ``fork``). Telokine trains
@@ -52,7 +52,7 @@ def _make_vec_env(scene: dict, n_envs: int, base_seed: int):
     from stable_baselines3.common.vec_env import SubprocVecEnv
 
     fns = [
-        functools.partial(_env_fn, scene=scene, rank=i, base_seed=base_seed)
+        functools.partial(_env_fn, scene=scene, rewards=rewards, rank=i, base_seed=base_seed)
         for i in range(n_envs)
     ]
     return SubprocVecEnv(fns, start_method="spawn")
@@ -77,7 +77,7 @@ def train(
 
     n_envs = 8
     n_steps = 512
-    env = _make_vec_env(scene, n_envs=n_envs, base_seed=0)
+    env = _make_vec_env(scene, rewards=rewards, n_envs=n_envs, base_seed=0)
 
     policy_kwargs = dict(net_arch=[64, 64])
     model = PPO(
@@ -96,6 +96,7 @@ def train(
 
     callback = _TelemetryCallback(
         scene=scene,
+        rewards=rewards,
         on_telemetry=on_telemetry,
         should_stop=should_stop,
         total_timesteps=total_timesteps,
@@ -124,13 +125,15 @@ class _StopTraining(Exception):
 class _TelemetryCallback(BaseCallback):
     """Streams reward/success telemetry and periodic live-preview frames."""
 
-    PREVIEW_EVERY_ROLLOTS = 4   # run a preview every N rollouts
-    PREVIEW_STEPS = 70          # env steps per preview (~1.1s of sim)
-    WINDOW = 25                 # rolling-mean window for reward/success
+    PREVIEW_EVERY_EPISODES = 10  # show a checkpoint preview every N episodes ("tries")
+    PREVIEW_STEPS = 90           # env steps per preview
+    PREVIEW_FPS = 35.0           # pace preview frames so they're actually watchable
+    WINDOW = 25                  # rolling-mean window for reward/success
 
     def __init__(
         self,
         scene: dict,
+        rewards: list[dict],
         on_telemetry: TelemetryFn,
         should_stop: StopFn,
         total_timesteps: int,
@@ -138,6 +141,7 @@ class _TelemetryCallback(BaseCallback):
     ) -> None:
         super().__init__()
         self.scene = scene
+        self.rewards = rewards
         self._on_telemetry = on_telemetry
         self._should_stop = should_stop
         self.total_timesteps = total_timesteps
@@ -148,6 +152,7 @@ class _TelemetryCallback(BaseCallback):
         self._episode_count = 0
         self._start = 0.0
         self._rollouts_seen = 0
+        self._last_preview_ep = 0
 
         # Separate single env used only for periodic live previews of the policy.
         self._preview_env = None
@@ -188,9 +193,10 @@ class _TelemetryCallback(BaseCallback):
                 }
             )
 
-            # Periodically preview the learning policy so the user can watch it
-            # get better at reaching the target.
-            if self._rollouts_seen % self.PREVIEW_EVERY_ROLLOTS == 0:
+            # Every ~N episodes ("tries"), pause and play back the current policy
+            # so the user watches the checkpoint behave — and sees it improve.
+            if self._episode_count - self._last_preview_ep >= self.PREVIEW_EVERY_EPISODES:
+                self._last_preview_ep = self._episode_count
                 self._preview()
 
         return True
@@ -199,17 +205,29 @@ class _TelemetryCallback(BaseCallback):
         from telokine.env import CubeAgentEnv
 
         if self._preview_env is None:
-            self._preview_env = CubeAgentEnv(self.scene, seed=12345)
+            self._preview_env = CubeAgentEnv(self.scene, rewards=self.rewards, seed=12345)
         env = self._preview_env
         obs, _ = env.reset()
-        # Send the start frame.
+        succ = float(np.mean(self._ep_success)) if self._ep_success else 0.0
+        # Tell the UI a checkpoint preview is starting so it can label it.
+        self._on_telemetry(
+            {
+                "type": "preview",
+                "episode": int(self._episode_count),
+                "reward": float(np.mean(self._ep_rewards)) if self._ep_rewards else 0.0,
+                "success_rate": succ,
+            }
+        )
         self._on_telemetry({"type": "frame", "objects": env.frame()})
+        dt = 1.0 / self.PREVIEW_FPS
         for _ in range(self.PREVIEW_STEPS):
             action, _ = self.model.predict(obs, deterministic=True)
             obs, _, term, trunc, _ = env.step(action)
             self._on_telemetry({"type": "frame", "objects": env.frame()})
+            time.sleep(dt)  # pace playback so the checkpoint is watchable
             if term or trunc:
                 break
+        self._on_telemetry({"type": "preview_end", "episode": int(self._episode_count)})
 
 
 def rollout_policy(
@@ -224,22 +242,38 @@ def rollout_policy(
 
     Runs up to ``max_steps`` total env steps (counting across episodes), so it
     always terminates even though each episode resets its own step counter.
+
+    Frames are paced to ~60fps so the trained behaviour is actually watchable —
+    without pacing the whole rollout floods the client in a few milliseconds and
+    looks like the agent teleports.
     """
     from stable_baselines3 import PPO
     from telokine.env import CubeAgentEnv
 
-    env = CubeAgentEnv(scene, seed)
+    frame_dt = 1.0 / 60.0
+    env = CubeAgentEnv(scene, seed=seed)
     policy = PPO.load(model_path, device="cpu")
     obs, _ = env.reset()
     on_frame({"type": "frame", "objects": env.frame()})
 
     total = 0
+    info: dict = {}
     while total < max_steps and not should_stop():
+        t0 = time.monotonic()
         action, _ = policy.predict(obs, deterministic=True)
         obs, _, term, trunc, info = env.step(action)
         on_frame({"type": "frame", "objects": env.frame()})
         total += 1
         if term or trunc:
-            # Reached (or failed) — stop so the user sees the final result.
+            # Reached (or failed): hold the final pose briefly so the user
+            # clearly sees where the agent ended up before the view resets.
+            for _ in range(45):
+                if should_stop():
+                    break
+                on_frame({"type": "frame", "objects": env.frame()})
+                time.sleep(frame_dt)
             break
+        elapsed = time.monotonic() - t0
+        if elapsed < frame_dt:
+            time.sleep(frame_dt - elapsed)
     on_frame({"type": "stopped", "reached": bool(info.get("reached"))})

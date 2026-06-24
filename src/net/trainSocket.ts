@@ -25,7 +25,10 @@ function handleMessage(ev: MessageEvent) {
 
   switch (msg.type) {
     case 'started': {
-      currentModelId = (msg.model_id as string) ?? null
+      // Two `started` messages arrive: the server's (carries model_id) and the
+      // training callback's (no model_id). Only the former should set the name,
+      // otherwise we'd wipe it and Run would fall back to plain physics.
+      if (msg.model_id) currentModelId = msg.model_id as string
       train.onStarted((msg.total_timesteps as number) ?? 0)
       run.setRunning(true) // mirror mode on, for preview frames
       break
@@ -39,6 +42,13 @@ function handleMessage(ev: MessageEvent) {
         elapsed: msg.elapsed as number,
         progress: msg.progress as number,
       })
+      break
+    case 'preview':
+      // A checkpoint playback is starting — label which "try" we're watching.
+      train.onPreview((msg.episode as number) ?? null)
+      break
+    case 'preview_end':
+      train.onPreview(null)
       break
     case 'frame':
       // Policy preview — mirror it in the viewport.
@@ -107,7 +117,13 @@ interface SerializedObject {
 
 export async function startTrain(
   scene: { objects: SerializedObject[] },
-  opts: { totalTimesteps?: number } = {},
+  opts: {
+    totalTimesteps?: number
+    rewards?: { id: string; kind: string; name: string; weight: number }[]
+    episodeLength?: number
+    actionPower?: number
+    curriculum?: number
+  } = {},
 ): Promise<void> {
   useTrainingStore.getState().setError(null)
   await connectTrain()
@@ -117,6 +133,10 @@ export async function startTrain(
       type: 'start',
       scene,
       total_timesteps: opts.totalTimesteps ?? 150_000,
+      rewards: opts.rewards ?? [],
+      episode_length: opts.episodeLength,
+      action_power: opts.actionPower,
+      curriculum: opts.curriculum,
     }),
   )
 }

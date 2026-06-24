@@ -42,6 +42,38 @@ def evaluate(blocks: list[RewardBlock], state: dict) -> float:
     """Compute the scalar reward for one physics step.
 
     ``state`` will carry per-step quantities (distance to target, velocities,
-    contact flags, upright measure, ...). Implemented in step 5.
+    contact flags, upright measure, ...).
     """
-    raise NotImplementedError("Wired in step 5 (reward blocks).")
+    if not blocks:
+        blocks = [
+            RewardBlock(kind="reward", name="Approach Target", weight=1.0),
+            RewardBlock(kind="reward", name="Reach Target", weight=4.0),
+            RewardBlock(kind="penalty", name="Exertion", weight=0.4),
+        ]
+
+    total = 0.0
+    for block in blocks:
+        magnitude = _term(block.name, state)
+        sign = -1.0 if block.kind == "penalty" else 1.0
+        total += sign * block.weight * magnitude
+    return float(total)
+
+
+def _term(name: str, state: dict) -> float:
+    if name == "Approach Target":
+        return max(-1.0, min(1.0, float(state.get("progress", 0.0)))) * 0.5
+    if name == "Reach Target":
+        return 10.0 if state.get("reached") else 0.0
+    if name == "Stay Upright":
+        return max(0.0, float(state.get("upright", 0.0)))
+    if name == "Move Forward":
+        return max(0.0, float(state.get("forward_delta", 0.0)))
+    if name == "Fall":
+        return 4.0 if state.get("fallen") else 0.0
+    if name == "Touch Wall":
+        return 3.0 if state.get("out_of_bounds") else 0.0
+    if name == "Move Backward":
+        return max(0.0, -float(state.get("forward_delta", 0.0)))
+    if name == "Exertion":
+        return 0.01 * float(state.get("action_energy", 0.0))
+    return 0.0

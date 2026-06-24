@@ -214,7 +214,7 @@ async def sim_ws(ws: WebSocket) -> None:
 # a pump coroutine forwards them to the client.
 
 def _run_train(
-    scene: dict, total_timesteps: int, model_id: str,
+    scene: dict, rewards: list[dict], total_timesteps: int, model_id: str,
     outbox: asyncio.Queue, loop: asyncio.AbstractEventLoop, stop: dict[str, bool],
 ) -> None:
     from telokine.train import train
@@ -225,7 +225,7 @@ def _run_train(
     try:
         train(
             scene=scene,
-            rewards=[],
+            rewards=rewards,
             total_timesteps=total_timesteps,
             on_telemetry=emit,
             should_stop=lambda: stop["stop"],
@@ -270,10 +270,17 @@ async def train_ws(ws: WebSocket) -> None:
 
                 model_id = f"policy_{uuid.uuid4().hex[:8]}"
                 total = int(msg.get("total_timesteps", 150_000))
+                rewards = msg.get("rewards", [])
+                scene = msg.get("scene", {})
+                scene["training"] = {
+                    "episode_length": msg.get("episode_length"),
+                    "action_power": msg.get("action_power"),
+                    "curriculum": msg.get("curriculum"),
+                }
                 await ws.send_json({"type": "started", "model_id": model_id, "total_timesteps": total})
                 train_task = asyncio.create_task(
                     asyncio.to_thread(
-                        _run_train, msg.get("scene", {}), total, model_id,
+                        _run_train, scene, rewards, total, model_id,
                         outbox, asyncio.get_running_loop(), stop,
                     )
                 )

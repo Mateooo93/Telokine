@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Port 1420 is Tauri's conventional dev port, so the desktop shell can wrap
-// this exact frontend unchanged once the Tauri Rust side is added.
+// GitHub Pages serves from /Telokine/; local dev uses /.
+const base = process.env.BASE_PATH ?? '/'
+
 export default defineConfig({
+  base,
   plugins: [react()],
   server: {
     port: 1420,

@@ -1,10 +1,18 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { Grid, OrbitControls, TransformControls } from '@react-three/drei'
+import { Grid, Line, OrbitControls, TransformControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useSceneStore } from '../store/useSceneStore'
 import { useRunStore } from '../store/useRunStore'
-import { SceneObjectMesh } from './SceneObjectMesh'
+import { ConnectorShape, SceneObjectMesh } from './SceneObjectMesh'
+import type { SceneObject, Vec3 } from './types'
+import type { Transform } from '../store/useRunStore'
+
+interface SurfaceHit {
+  id: string
+  point: Vec3
+  normal: Vec3
+}
 
 /**
  * The 3D viewport — Layer 1.
@@ -17,12 +25,32 @@ export function Viewport() {
   const objects = useSceneStore((s) => s.objects)
   const selectedId = useSceneStore((s) => s.selectedId)
   const transformMode = useSceneStore((s) => s.transformMode)
+  const placementTool = useSceneStore((s) => s.placementTool)
+  const placementDraft = useSceneStore((s) => s.placementDraft)
   const select = useSceneStore((s) => s.select)
   const moveObject = useSceneStore((s) => s.moveObject)
   const rotateObject = useSceneStore((s) => s.rotateObject)
+  const placeSensorOn = useSceneStore((s) => s.placeSensorOn)
+  const startConnectorPlacement = useSceneStore((s) => s.startConnectorPlacement)
+  const completeConnectorPlacement = useSceneStore((s) => s.completeConnectorPlacement)
+  const cancelPlacement = useSceneStore((s) => s.cancelPlacement)
 
   const running = useRunStore((s) => s.running)
   const transforms = useRunStore((s) => s.transforms)
+  const [hoverHit, setHoverHit] = useState<SurfaceHit | null>(null)
+
+  // Esc bails out of an in-progress placement.
+  useEffect(() => {
+    if (!placementTool) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        cancelPlacement()
+        setHoverHit(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [placementTool, cancelPlacement])
 
   // Track each object's rendered group so the gizmo can attach to the selected
   // one. This is a mutable ref (NOT state) — mutations here must not trigger a
@@ -59,24 +87,61 @@ export function Viewport() {
   const handleObjectDown = (id: string) => (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
     if (running) return
+    if (placementTool) {
+      const target = objects.find((o) => o.id === id)
+      if (!target || !canAttachTo(target)) return
+      const hit = surfaceHit(id, e)
+      if (placementTool === 'sensor') {
+        placeSensorOn(hit.point, hit.normal, id)
+        setHoverHit(null)
+        return
+      }
+      if (!placementDraft) {
+        startConnectorPlacement(placementTool, id, hit.point, hit.normal)
+        setHoverHit(hit)
+        return
+      }
+      if (placementDraft.fromId !== id) {
+        completeConnectorPlacement(id, hit.point, hit.normal)
+        setHoverHit(null)
+      }
+      return
+    }
     select(id)
   }
 
+  const handleObjectMove = (id: string) => (e: ThreeEvent<PointerEvent>) => {
+    if (!placementTool || running) return
+    const target = objects.find((o) => o.id === id)
+    if (!target || !canAttachTo(target)) return
+    e.stopPropagation()
+    setHoverHit(surfaceHit(id, e))
+  }
+
+  const handleObjectOut = (id: string) => () => {
+    setHoverHit((hit) => (hit?.id === id ? null : hit))
+  }
+
   const selectedObject = selectedId ? refs.current[selectedId] ?? null : null
-  const showGizmo = !running && !!selectedObject
+  const showGizmo = !running && !placementTool && !!selectedObject
 
   return (
-    <Canvas
-      shadows
-      dpr={[1, 2]}
-      camera={{ position: [7, 6, 7], fov: 50 }}
-      onPointerMissed={() => select(null)}
-    >
-      <color attach="background" args={['#0e0f15']} />
-      <fog attach="fog" args={['#0e0f15', 22, 52]} />
+    <>
+      <Canvas
+        shadows
+        dpr={[1, 2]}
+        camera={{ position: [7, 6, 7], fov: 50 }}
+        style={{ cursor: placementTool ? 'crosshair' : undefined }}
+        onPointerMissed={() => {
+          if (placementTool) return
+          select(null)
+        }}
+      >
+      <color attach="background" args={['#101314']} />
+      <fog attach="fog" args={['#101314', 22, 52]} />
 
       <ambientLight intensity={0.35} />
-      <hemisphereLight args={['#9fb4ff', '#1a1d28', 0.55]} />
+      <hemisphereLight args={['#d9d1bd', '#151a1b', 0.55]} />
       <directionalLight
         position={[7, 11, 5]}
         intensity={1.5}
@@ -96,10 +161,10 @@ export function Viewport() {
         args={[60, 60]}
         cellSize={1}
         cellThickness={0.6}
-        cellColor="#262b3a"
+        cellColor="#2b3436"
         sectionSize={5}
         sectionThickness={1.1}
-        sectionColor="#3a4258"
+        sectionColor="#4b585b"
         fadeDistance={50}
         fadeStrength={1}
         infiniteGrid
@@ -108,17 +173,27 @@ export function Viewport() {
       {/* Stage floor: shadow receiver */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
         <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color="#12141b" roughness={1} />
+        <meshStandardMaterial color="#111516" roughness={1} />
       </mesh>
+
+      <AttachmentLines objects={objects} transforms={transforms} />
+      <PlacementPreview tool={placementTool} draft={placementDraft} hover={hoverHit} />
 
       {objects.map((obj) => (
         <SceneObjectMesh
           key={obj.id}
           obj={obj}
           selected={obj.id === selectedId}
+          attachTarget={
+            !!placementTool &&
+            canAttachTo(obj) &&
+            (hoverHit?.id === obj.id || placementDraft?.fromId === obj.id)
+          }
           live={transforms[obj.id]}
           onReady={registerObject}
           onPointerDown={handleObjectDown(obj.id)}
+          onPointerMove={handleObjectMove(obj.id)}
+          onPointerOut={handleObjectOut(obj.id)}
         />
       ))}
 
@@ -143,6 +218,140 @@ export function Viewport() {
         maxPolarAngle={Math.PI / 2.05}
         target={[0, 0.5, 0]}
       />
-    </Canvas>
+      </Canvas>
+      {placementTool && (
+        <div className="placement-hint">
+          <div className="ph-title">
+            <span className="ph-chip">{placementTool}</span>
+            {placementTool === 'sensor' ? 'Mounting a sensor' : placementDraft ? 'Pick the second part' : 'Pick the first part'}
+          </div>
+          {placementTool === 'sensor' ? (
+            <ol className="ph-steps">
+              <li className="active">Hover a body part — the sensor previews on the surface.</li>
+              <li>Click to mount it there.</li>
+            </ol>
+          ) : (
+            <ol className="ph-steps">
+              <li className={placementDraft ? 'done' : 'active'}>Click part A — the motor pins to that surface.</li>
+              <li className={placementDraft ? 'active' : ''}>Click part B — it snaps flush against the motor and links.</li>
+            </ol>
+          )}
+          <span className="ph-esc">Press Esc or Cancel to exit.</span>
+        </div>
+      )}
+    </>
   )
+}
+
+function canAttachTo(obj: SceneObject): boolean {
+  return obj.role === 'agent' || obj.role === 'prop'
+}
+
+function surfaceHit(id: string, e: ThreeEvent<PointerEvent>): SurfaceHit {
+  const normal = new THREE.Vector3(0, 1, 0)
+  if (e.face) normal.copy(e.face.normal).transformDirection(e.object.matrixWorld)
+  normal.normalize()
+  // Keep the point exactly on the surface — the connector pivots there and the
+  // second part is snapped flush against it.
+  const p = e.point
+  return { id, point: [p.x, p.y, p.z], normal: [normal.x, normal.y, normal.z] }
+}
+
+const GHOST_SPEC: Record<'motor' | 'joint' | 'sensor', { radius: number; size: number; color: string }> = {
+  motor: { radius: 0.26, size: 0.38, color: '#c98a4a' },
+  joint: { radius: 0.22, size: 0.3, color: '#caa45c' },
+  sensor: { radius: 0.22, size: 0.3, color: '#6f8f9b' },
+}
+
+function ConnectorGhost({ tool, point, axis }: { tool: 'motor' | 'joint' | 'sensor'; point: Vec3; axis: Vec3 }) {
+  const spec = GHOST_SPEC[tool]
+  return (
+    <group position={point}>
+      <ConnectorShape kind={tool} axis={axis} radius={spec.radius} size={spec.size} color={spec.color} ghost />
+    </group>
+  )
+}
+
+function PlacementPreview({
+  tool,
+  draft,
+  hover,
+}: {
+  tool: ReturnType<typeof useSceneStore.getState>['placementTool']
+  draft: ReturnType<typeof useSceneStore.getState>['placementDraft']
+  hover: SurfaceHit | null
+}) {
+  if (!tool) return null
+
+  // Second step: the pivot is locked on part A; show the connector fixed there
+  // while the user picks part B (which will snap flush against it).
+  if (draft && tool !== 'sensor') {
+    return (
+      <group>
+        <ConnectorGhost tool={tool} point={draft.fromPoint} axis={draft.fromNormal} />
+        <AnchorDot point={draft.fromPoint} color="#e6b86c" />
+        {hover && hover.id !== draft.fromId && (
+          <>
+            <Line points={[draft.fromPoint, hover.point]} color="#76d7a8" lineWidth={2} transparent opacity={0.7} dashed dashSize={0.12} gapSize={0.08} />
+            <AnchorDot point={hover.point} color="#76d7a8" />
+          </>
+        )}
+      </group>
+    )
+  }
+
+  // First step: a translucent connector floats on whatever surface is hovered.
+  if (!hover) return null
+  return (
+    <group>
+      <ConnectorGhost tool={tool} point={hover.point} axis={hover.normal} />
+      <AnchorDot point={hover.point} color={tool === 'sensor' ? '#6f8f9b' : '#e6b86c'} />
+    </group>
+  )
+}
+
+function AnchorDot({ point, color }: { point: Vec3; color: string }) {
+  return (
+    <mesh position={point}>
+      <sphereGeometry args={[0.07, 16, 16]} />
+      <meshBasicMaterial color={color} />
+    </mesh>
+  )
+}
+
+function AttachmentLines({
+  objects,
+  transforms,
+}: {
+  objects: SceneObject[]
+  transforms: Record<string, Transform>
+}) {
+  const byId = Object.fromEntries(objects.map((o) => [o.id, o]))
+  return (
+    <>
+      {objects
+        .filter((o) => o.attachedTo && byId[o.attachedTo])
+        .map((child) => {
+          const parent = byId[child.attachedTo!]
+          const a = child.anchor.some((v) => Math.abs(v) > 1e-6) ? child.anchor : pointFor(parent, transforms[parent.id])
+          const b = child.connectedTo && byId[child.connectedTo]
+            ? (hasPoint(child.connectedAnchor) ? child.connectedAnchor : pointFor(byId[child.connectedTo], transforms[child.connectedTo]))
+            : pointFor(child, transforms[child.id])
+          return (
+            <group key={`${child.id}-${child.attachedTo}-${child.connectedTo ?? 'mount'}`}>
+              <Line points={[a, pointFor(child, transforms[child.id])]} color="#d39b4a" lineWidth={1.4} transparent opacity={0.62} />
+              {child.connectedTo && <Line points={[pointFor(child, transforms[child.id]), b]} color="#7fa68d" lineWidth={1.4} transparent opacity={0.62} />}
+            </group>
+          )
+        })}
+    </>
+  )
+}
+
+function pointFor(obj: SceneObject, live?: Transform): Vec3 {
+  return live?.pos ?? obj.position
+}
+
+function hasPoint(point: Vec3): boolean {
+  return point.some((v) => Math.abs(v) > 1e-6)
 }
