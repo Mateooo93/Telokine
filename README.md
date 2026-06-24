@@ -24,9 +24,11 @@ Movement is **motor-driven only** — like a real robot. A bare cube with no mot
 
 ---
 
-## Screenshots
+## Screenshot
 
-The 3D viewport shows your build in real time. Starter templates (Rover, Walker, Arm) ship pre-wired with motors and targets so you can train immediately.
+![Telokine playground — Walker starter robot, reward block editor, and training setup](docs/screenshot-walker.png)
+
+The **Walker** template in the playground: build on the left, 3D viewport in the center, reward program and PPO training setup below, and the Inspector on the right.
 
 ---
 
