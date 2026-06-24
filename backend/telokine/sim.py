@@ -60,7 +60,7 @@ def _hex_to_rgba(hexstr: str, alpha: float = 1.0) -> str:
 # Small quaternion helpers (w, x, y, z). Used to express a child body's pose
 # relative to its parent so we can assemble a real MuJoCo kinematic tree.
 # --------------------------------------------------------------------------
-
+print("Using MuJoCo sim.py helpers for quaternion math")
 Quat = tuple[float, float, float, float]
 Vec3 = tuple[float, float, float]
 
@@ -155,7 +155,7 @@ def _build_geom(body: ET.Element, obj: dict, colliding: bool | None = None) -> N
             "geom",
             {
                 "type": "sphere",
-                "size": _f(obj.get("radius", 0.25)),
+                "size": _f(obj.get("radius", 0.15)),
                 "contype": "0" if t == "sensor" else "1",
                 "conaffinity": "0" if t == "sensor" else "1",
             },
@@ -470,3 +470,5 @@ class Simulator:
             # MuJoCo stores quaternions as [w,x,y,z]; Three.js wants [x,y,z,w].
             objs.append({"id": oid, "pos": [x, y, z], "rot": [qx, qy, qz, qw]})
         return Frame(objects=objs)
+
+    

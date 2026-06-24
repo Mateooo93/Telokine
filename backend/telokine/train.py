@@ -176,6 +176,7 @@ class _TelemetryCallback(BaseCallback):
 
         self._ep_rewards: deque[float] = deque(maxlen=self.WINDOW)
         self._ep_success: deque[float] = deque(maxlen=self.WINDOW)
+        self._ep_oob: deque[float] = deque(maxlen=self.WINDOW)
         self._episode_count = 0
         self._start = 0.0
         self._rollouts_seen = 0
@@ -200,6 +201,7 @@ class _TelemetryCallback(BaseCallback):
                 self._ep_rewards.append(float(ep["r"]))
                 self._episode_count += 1
                 self._ep_success.append(1.0 if info.get("reached") else 0.0)
+                self._ep_oob.append(float(info.get("out_of_bounds_metric", 0.0)))
 
         # Emit telemetry once per PPO rollout (every rollout_steps env steps).
         if self.n_calls % self.rollout_steps == 0:
@@ -207,6 +209,7 @@ class _TelemetryCallback(BaseCallback):
             elapsed = time.time() - self._start
             mean_r = float(np.mean(self._ep_rewards)) if self._ep_rewards else 0.0
             succ = float(np.mean(self._ep_success)) if self._ep_success else 0.0
+            oob = float(np.mean(self._ep_oob)) if self._ep_oob else 0.0
             progress = min(1.0, self.num_timesteps / max(1, self.total_timesteps))
             self._on_telemetry(
                 {
@@ -215,6 +218,7 @@ class _TelemetryCallback(BaseCallback):
                     "episode": int(self._episode_count),
                     "reward": mean_r,
                     "success_rate": succ,
+                    "out_of_bounds_metric": oob,
                     "elapsed": round(elapsed, 1),
                     "progress": round(progress, 4),
                 }

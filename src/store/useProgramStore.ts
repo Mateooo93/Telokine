@@ -33,6 +33,7 @@ interface ProgramState {
   addConnection: (from: string, to: string) => void
   removeConnection: (id: string) => void
   loadTemplate: (template: TemplateName) => void
+  setBlocks: (blocks: ProgramBlock[]) => void
   setTrainingParam: (key: 'totalTimesteps' | 'episodeLength' | 'actionPower' | 'curriculum', value: number) => void
 }
 
@@ -146,6 +147,8 @@ export const useProgramStore = create<ProgramState>((set) => ({
     set((state) => ({ connections: state.connections.filter((c) => c.id !== id) })),
 
   loadTemplate: (name) => set(template(name)),
+
+  setBlocks: (blocks) => set({ blocks, connections: [] }),
 
   setTrainingParam: (key, value) => set({ [key]: value }),
 }))

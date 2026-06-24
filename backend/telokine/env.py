@@ -192,6 +192,7 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
             "progress": float(progress),
             "reached": bool(reached),
             "out_of_bounds": bool(oob),
+            "out_of_bounds_metric": self._out_of_bounds(),
             "upright": float(upright),
             "fallen": bool(upright < 0.25 or float(pos[1]) < 0.2),
             "forward_delta": forward_delta,
@@ -207,6 +208,7 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
             "distance": float(dist),
             "reached": bool(reached),
             "out_of_bounds": bool(oob),
+            "out_of_bounds_metric": self._out_of_bounds(),
         }
         return self._obs(), reward, terminated, truncated, info
 
@@ -236,3 +238,9 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
         b = self.data.body(self._agent_bid)
         xmat = b.xmat
         return float(max(0.0, min(1.0, xmat[4])))
+    
+    def _out_of_bounds(self) -> float:
+        """Returns normalized distance out of bounds: 0 if within, 1 if beyond threshold."""
+        pos = self.data.body(self._agent_bid).xpos
+        max_dist = max(abs(float(pos[0])), abs(float(pos[2])))
+        return float(max(0.0, min(1.0, (max_dist - self.OUT_OF_BOUNDS) / self.OUT_OF_BOUNDS)))

@@ -188,11 +188,25 @@ export function SceneObjectMesh({ obj, selected, attachTarget = false, live, onR
 
       {obj.type === 'wheel' && (
         // Spin axis is local Z, so a wheel with no rotation rolls toward +X.
-        <mesh castShadow receiveShadow rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[obj.radius, obj.radius, obj.size, 40]} />
-          <meshStandardMaterial color={obj.color} roughness={0.65} metalness={0.15} />
-          {outline && <Edges color={outline} />}
-        </mesh>
+        // Add a stripe to visualize rotation
+        <group rotation={[Math.PI / 2, 0, 0]}>
+          <mesh castShadow receiveShadow>
+            <cylinderGeometry args={[obj.radius, obj.radius, obj.size, 40]} />
+            <meshStandardMaterial color={obj.color} roughness={0.65} metalness={0.15} />
+            {outline && <Edges color={outline} />}
+          </mesh>
+          {/* Rotation indicator stripe */}
+          <mesh position={[obj.radius * 0.85, 0, 0]}>
+            <boxGeometry args={[obj.radius * 0.3, obj.size * 1.05, obj.radius * 0.18]} />
+            <meshStandardMaterial
+              color="#ffd24d"
+              emissive="#ffd24d"
+              emissiveIntensity={0.6}
+              metalness={0.8}
+              roughness={0.2}
+            />
+          </mesh>
+        </group>
       )}
 
       {(obj.type === 'joint' || obj.type === 'motor' || obj.type === 'sensor') && (

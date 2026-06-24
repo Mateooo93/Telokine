@@ -18,6 +18,7 @@ export function Inspector() {
   const updateObject = useSceneStore((s) => s.updateObject)
   const rotateObject = useSceneStore((s) => s.rotateObject)
   const removeObject = useSceneStore((s) => s.removeObject)
+  const duplicateObject = useSceneStore((s) => s.duplicateObject)
   const snapConnectedPart = useSceneStore((s) => s.snapConnectedPart)
   const select = useSceneStore((s) => s.select)
 
@@ -280,6 +281,9 @@ export function Inspector() {
         </label>
       </Section>
 
+      <button className="btn" onClick={() => duplicateObject(obj.id)} disabled={obj.type === 'target'}>
+        Duplicate
+      </button>
       <button className="btn danger" onClick={() => removeObject(obj.id)}>
         Delete object
       </button>

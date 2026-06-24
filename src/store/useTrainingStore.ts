@@ -6,6 +6,7 @@ export interface TelemetryPoint {
   step: number
   reward: number
   success: number
+  outOfBoundsMetric: number
 }
 
 interface TrainingState {
@@ -24,7 +25,7 @@ interface TrainingState {
   error: string | null
 
   onStarted: (totalTimesteps: number) => void
-  onTelemetry: (p: { step: number; reward: number; success_rate: number; episode: number; elapsed: number; progress: number }) => void
+  onTelemetry: (p: { step: number; reward: number; success_rate: number; episode: number; elapsed: number; progress: number; out_of_bounds_metric?: number }) => void
   onPreview: (episode: number | null) => void
   onDevice: (device: string) => void
   onDone: () => void
@@ -54,7 +55,7 @@ export const useTrainingStore = create<TrainingState>((set) => ({
       progress: p.progress,
       episodes: p.episode,
       elapsed: p.elapsed,
-      history: [...s.history, { step: p.step, reward: p.reward, success: p.success_rate }],
+      history: [...s.history, { step: p.step, reward: p.reward, success: p.success_rate, outOfBoundsMetric: p.out_of_bounds_metric ?? 0 }],
     })),
 
   onPreview: (previewEpisode) => set({ previewEpisode }),

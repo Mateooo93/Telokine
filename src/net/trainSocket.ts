@@ -7,7 +7,7 @@ import { useTrainingStore } from '../store/useTrainingStore'
 // periodic policy-preview frames into the run store so the viewport mirrors the
 // learning cube live. A single long-lived connection is reused.
 
-const TRAIN_URL = 'ws://localhost:8000/ws/train'
+const TRAIN_URL = 'ws://localhost:8002/ws/train'
 
 let ws: WebSocket | null = null
 let connecting: Promise<void> | null = null
@@ -41,6 +41,7 @@ function handleMessage(ev: MessageEvent) {
         episode: msg.episode as number,
         elapsed: msg.elapsed as number,
         progress: msg.progress as number,
+        out_of_bounds_metric: msg.out_of_bounds_metric as number,
       })
       break
     case 'device':

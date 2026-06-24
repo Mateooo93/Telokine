@@ -46,6 +46,87 @@ def policy_exists(name: str) -> dict[str, Any]:
     return {"name": name, "exists": os.path.exists(path)}
 
 
+@app.get("/policies")
+def list_policies() -> dict[str, Any]:
+    """List all saved trained policies."""
+    os.makedirs("policies", exist_ok=True)
+    policies = []
+    for fname in os.listdir("policies"):
+        if fname.endswith(".zip"):
+            fpath = os.path.join("policies", fname)
+            size = os.path.getsize(fpath)
+            mtime = os.path.getmtime(fpath)
+            policies.append({
+                "name": fname[:-4],  # remove .zip
+                "size": size,
+                "created": mtime,
+            })
+    return {"policies": sorted(policies, key=lambda p: p["created"], reverse=True)}
+
+
+@app.delete("/policies/{name}")
+def delete_policy(name: str) -> dict[str, Any]:
+    """Delete a saved trained policy."""
+    path = os.path.join("policies", f"{name}.zip")
+    if os.path.exists(path):
+        os.remove(path)
+        return {"success": True, "message": f"Deleted policy '{name}'"}
+    return {"success": False, "message": f"Policy '{name}' not found"}
+
+
+@app.get("/blocks")
+def list_blocks() -> dict[str, Any]:
+    """List all saved block configurations."""
+    os.makedirs("blocks", exist_ok=True)
+    blocks = []
+    for fname in os.listdir("blocks"):
+        if fname.endswith(".json"):
+            fpath = os.path.join("blocks", fname)
+            mtime = os.path.getmtime(fpath)
+            blocks.append({
+                "name": fname[:-5],  # remove .json
+                "created": mtime,
+            })
+    return {"blocks": sorted(blocks, key=lambda b: b["created"], reverse=True)}
+
+
+@app.get("/blocks/{name}")
+def load_blocks(name: str) -> dict[str, Any]:
+    """Load a saved block configuration."""
+    path = os.path.join("blocks", f"{name}.json")
+    if not os.path.exists(path):
+        return {"error": f"Block configuration '{name}' not found"}
+    try:
+        with open(path, "r") as f:
+            config = json.load(f)
+        return {"name": name, "blocks": config}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.post("/blocks/{name}")
+def save_blocks(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Save a block configuration."""
+    os.makedirs("blocks", exist_ok=True)
+    path = os.path.join("blocks", f"{name}.json")
+    try:
+        with open(path, "w") as f:
+            json.dump(body.get("blocks", []), f, indent=2)
+        return {"success": True, "name": name, "message": f"Saved block configuration '{name}'"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@app.delete("/blocks/{name}")
+def delete_blocks(name: str) -> dict[str, Any]:
+    """Delete a saved block configuration."""
+    path = os.path.join("blocks", f"{name}.json")
+    if os.path.exists(path):
+        os.remove(path)
+        return {"success": True, "message": f"Deleted block configuration '{name}'"}
+    return {"success": False, "message": f"Block configuration '{name}' not found"}
+
+
 # --------------------------------------------------------------------------
 # Built frontend (single-process serving: API + websocket + SPA on one origin).
 # If the frontend has been built (../dist), serve it from here so the user only
@@ -309,3 +390,4 @@ if os.path.isdir(os.path.join(_FRONTEND_DIR, "assets")):
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)
         return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
+print("Telokine backend ready. Serving SPA from", _FRONTEND_DIR)

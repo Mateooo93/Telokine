@@ -3,6 +3,7 @@ import {
   createObject,
   halfExtentAlong,
   normalizeVec,
+  serializeScene,
   type ObjectType,
   type SceneObject,
   type Vec3,
@@ -52,14 +53,20 @@ interface SceneState {
   setPlacementTool: (tool: PlacementTool) => void
   /** Re-seat a connector's Part B so its face touches the connector pivot. */
   snapConnectedPart: (connectorId: string) => void
+  /** Clone a part with a small offset (same props, new id). */
+  duplicateObject: (id: string) => void
+  /** Save the current build to browser storage. */
+  saveBuild: () => void
+  /** Load the last saved build from browser storage. Returns false if none. */
+  loadBuild: () => boolean
 }
 
 const INITIAL_SCENE: SceneObject[] = [
-  // The stage floor lives in the viewport, not here, so the default scene is
-  // just the agent cube and its target — the exact setup from the vision.
   createObject('cube', [0, 0.5, 0]),
   createObject('target', [4, 0.5, 0]),
 ]
+
+const BUILD_STORAGE_KEY = 'telokine-build-v1'
 
 export const useSceneStore = create<SceneState>((set) => ({
   objects: INITIAL_SCENE,
@@ -158,23 +165,107 @@ export const useSceneStore = create<SceneState>((set) => ({
 
   removeObject: (id) => {
     invalidatePolicy()
-    set((state) => ({
-      objects: state.objects.filter((o) => o.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-    }))
+    set((state) => {
+      // When removing an object, also remove any children attached to it
+      // and any connectors that connected to it
+      const getDescendants = (objId: string): string[] => {
+        const descendants: string[] = [objId]
+        const queue = [objId]
+        while (queue.length > 0) {
+          const currentId = queue.shift()!
+          const children = state.objects
+            .filter((o) => o.attachedTo === currentId || o.id === currentId)
+            .map((o) => o.id)
+          descendants.push(...children.filter((c) => c !== currentId))
+          queue.push(...children.filter((c) => c !== currentId))
+        }
+        return descendants
+      }
+
+      const toRemove = new Set(getDescendants(id))
+      // Also remove any connectors where this object is the connectedTo target
+      state.objects.forEach((o) => {
+        if (o.connectedTo === id) {
+          toRemove.add(o.id)
+        }
+      })
+
+      return {
+        objects: state.objects.filter((o) => !toRemove.has(o.id)),
+        selectedId: state.selectedId === id || toRemove.has(state.selectedId || '') ? null : state.selectedId,
+      }
+    })
   },
 
   select: (id) => set({ selectedId: id }),
 
   moveObject: (id, position) =>
-    set((state) => ({
-      objects: state.objects.map((o) => (o.id === id ? { ...o, position } : o)),
-    })),
+    set((state) => {
+      // Find all descendants of this object (children, grandchildren, etc.)
+      const getDescendants = (objId: string): string[] => {
+        const descendants: string[] = [objId]
+        const queue = [objId]
+        while (queue.length > 0) {
+          const currentId = queue.shift()!
+          const children = state.objects
+            .filter((o) => o.attachedTo === currentId)
+            .map((o) => o.id)
+          descendants.push(...children)
+          queue.push(...children)
+        }
+        return descendants
+      }
+
+      const descendants = getDescendants(id)
+      const selected = state.objects.find((o) => o.id === id)
+      if (!selected) return state
+
+      const delta: Vec3 = [
+        position[0] - selected.position[0],
+        position[1] - selected.position[1],
+        position[2] - selected.position[2],
+      ]
+
+      return {
+        objects: state.objects.map((o) => {
+          if (descendants.includes(o.id)) {
+            return {
+              ...o,
+              position: [o.position[0] + delta[0], o.position[1] + delta[1], o.position[2] + delta[2]],
+            }
+          }
+          return o
+        }),
+      }
+    }),
 
   rotateObject: (id, rotation) =>
-    set((state) => ({
-      objects: state.objects.map((o) => (o.id === id ? { ...o, rotation } : o)),
-    })),
+    set((state) => {
+      // Find all descendants of this object
+      const getDescendants = (objId: string): string[] => {
+        const descendants: string[] = [objId]
+        const queue = [objId]
+        while (queue.length > 0) {
+          const currentId = queue.shift()!
+          const children = state.objects
+            .filter((o) => o.attachedTo === currentId)
+            .map((o) => o.id)
+          descendants.push(...children)
+          queue.push(...children)
+        }
+        return descendants
+      }
+
+      const descendants = getDescendants(id)
+      return {
+        objects: state.objects.map((o) => {
+          if (descendants.includes(o.id)) {
+            return { ...o, rotation }
+          }
+          return o
+        }),
+      }
+    }),
 
   updateObject: (id, patch) =>
     set((state) => ({
@@ -205,7 +296,88 @@ export const useSceneStore = create<SceneState>((set) => ({
         ),
       }
     }),
+
+  duplicateObject: (id) => {
+    invalidatePolicy()
+    set((state) => {
+      const src = state.objects.find((o) => o.id === id)
+      if (!src) return state
+      const copy = createObject(src.type, [src.position[0] + 0.6, src.position[1], src.position[2] + 0.6])
+      Object.assign(copy, {
+        ...src,
+        id: copy.id,
+        position: copy.position,
+        attachedTo: null,
+        connectedTo: null,
+      })
+      return { objects: [...state.objects, copy], selectedId: copy.id }
+    })
+  },
+
+  saveBuild: () => {
+    const { objects } = useSceneStore.getState()
+    localStorage.setItem(BUILD_STORAGE_KEY, JSON.stringify(serializeScene(objects)))
+  },
+
+  loadBuild: () => {
+    const raw = localStorage.getItem(BUILD_STORAGE_KEY)
+    if (!raw) return false
+    try {
+      const data = JSON.parse(raw) as { objects: SceneObject[] }
+      if (!Array.isArray(data.objects) || data.objects.length === 0) return false
+      invalidatePolicy()
+      useSceneStore.setState({
+        objects: data.objects,
+        selectedId: null,
+        placementTool: null,
+        placementDraft: null,
+      })
+      return true
+    } catch {
+      return false
+    }
+  },
 }))
+
+// Helper to validate agent assembly
+export function validateAgentAssembly(objects: SceneObject[]): {
+  isValid: boolean
+  errors: string[]
+} {
+  const errors: string[] = []
+  const agent = objects.find((o) => o.role === 'agent')
+  
+  if (!agent) {
+    errors.push('No agent found in scene')
+    return { isValid: false, errors }
+  }
+
+  // Check that all children are properly connected
+  const connectors = objects.filter((o) => o.type === 'motor' || o.type === 'joint')
+  const connectedParts = new Set<string>()
+  connectedParts.add(agent.id)
+
+  for (const conn of connectors) {
+    if (!conn.attachedTo || !conn.connectedTo) {
+      errors.push(`Connector is not properly connected`)
+      continue
+    }
+    const parent = objects.find((o) => o.id === conn.attachedTo)
+    const child = objects.find((o) => o.id === conn.connectedTo)
+    
+    if (!parent) errors.push(`Connector has missing parent`)
+    if (!child) errors.push(`Connector has missing child`)
+    
+    if (parent && child) {
+      connectedParts.add(child.id)
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+  }
+}
 
 function createTemplate(template: RobotTemplate): SceneObject[] {
   if (template === 'walker') return walkerTemplate()
