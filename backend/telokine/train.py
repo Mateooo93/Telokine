@@ -23,6 +23,30 @@ import numpy as np
 TelemetryFn = Callable[[dict], None]
 StopFn = Callable[[], bool]
 
+
+def pick_device() -> str:
+    """Pick the torch device for PPO: CUDA when healthy, otherwise CPU.
+
+    Override with ``TELOKINE_DEVICE=cpu`` or ``TELOKINE_DEVICE=cuda``.
+    Falls back to CPU when CUDA is missing or fails to initialize (common on
+    headless servers or broken drivers).
+    """
+    override = os.environ.get("TELOKINE_DEVICE", "").strip().lower()
+    if override in ("cpu", "cuda"):
+        return override
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            try:
+                torch.zeros(1, device="cuda")
+                return "cuda"
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return "cpu"
+
 # SB3 is heavy (torch). Import guarded so importing this module never forces
 # torch to load — the server boots fine without the ml extra installed.
 try:
@@ -79,6 +103,9 @@ def train(
     n_steps = 512
     env = _make_vec_env(scene, rewards=rewards, n_envs=n_envs, base_seed=0)
 
+    device = pick_device()
+    on_telemetry({"type": "device", "device": device})
+
     policy_kwargs = dict(net_arch=[64, 64])
     model = PPO(
         "MlpPolicy",
@@ -89,7 +116,7 @@ def train(
         n_epochs=10,
         gamma=0.99,
         policy_kwargs=policy_kwargs,
-        device="auto",  # CUDA when available
+        device=device,
         verbose=0,
         seed=0,
     )
@@ -252,7 +279,7 @@ def rollout_policy(
 
     frame_dt = 1.0 / 60.0
     env = CubeAgentEnv(scene, seed=seed)
-    policy = PPO.load(model_path, device="cpu")
+    policy = PPO.load(model_path, device=pick_device())
     obs, _ = env.reset()
     on_frame({"type": "frame", "objects": env.frame()})
 

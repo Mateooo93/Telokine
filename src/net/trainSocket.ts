@@ -43,6 +43,9 @@ function handleMessage(ev: MessageEvent) {
         progress: msg.progress as number,
       })
       break
+    case 'device':
+      train.onDevice(String(msg.device ?? 'cpu'))
+      break
     case 'preview':
       // A checkpoint playback is starting — label which "try" we're watching.
       train.onPreview((msg.episode as number) ?? null)

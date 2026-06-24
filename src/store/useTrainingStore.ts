@@ -19,11 +19,14 @@ interface TrainingState {
   policyName: string | null
   /** Episode number of the checkpoint currently being previewed, or null. */
   previewEpisode: number | null
+  /** cpu or cuda — reported when training starts. */
+  device: string | null
   error: string | null
 
   onStarted: (totalTimesteps: number) => void
   onTelemetry: (p: { step: number; reward: number; success_rate: number; episode: number; elapsed: number; progress: number }) => void
   onPreview: (episode: number | null) => void
+  onDevice: (device: string) => void
   onDone: () => void
   setError: (e: string | null) => void
   /** Drop the saved policy (e.g. the scene changed so it no longer applies). */
@@ -40,10 +43,11 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   elapsed: 0,
   policyName: null,
   previewEpisode: null,
+  device: null,
   error: null,
 
   onStarted: (totalTimesteps) =>
-    set({ status: 'training', progress: 0, totalTimesteps, history: [], episodes: 0, elapsed: 0, previewEpisode: null, error: null }),
+    set({ status: 'training', progress: 0, totalTimesteps, history: [], episodes: 0, elapsed: 0, previewEpisode: null, device: null, error: null }),
 
   onTelemetry: (p) =>
     set((s) => ({
@@ -54,6 +58,8 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     })),
 
   onPreview: (previewEpisode) => set({ previewEpisode }),
+
+  onDevice: (device) => set({ device }),
 
   onDone: () => set({ status: 'done', progress: 1, previewEpisode: null }),
 

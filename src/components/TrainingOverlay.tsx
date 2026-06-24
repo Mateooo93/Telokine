@@ -15,6 +15,7 @@ export function TrainingOverlay() {
   const error = useTrainingStore((s) => s.error)
   const policyName = useTrainingStore((s) => s.policyName)
   const previewEpisode = useTrainingStore((s) => s.previewEpisode)
+  const device = useTrainingStore((s) => s.device)
 
   if (status === 'idle' && !error) return null
 
@@ -31,6 +32,9 @@ export function TrainingOverlay() {
             <span className="muted">{Math.round(progress * 100)}%</span>
             <span className="muted">· {elapsed.toFixed(0)}s</span>
             <span className="muted">· {episodes} tries</span>
+            {device && (
+              <span className="muted">· {device === 'cuda' ? 'GPU' : 'CPU'}</span>
+            )}
             <button className="btn mini danger" onClick={stopTrain}>
               Stop
             </button>

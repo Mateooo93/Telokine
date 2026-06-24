@@ -6,7 +6,7 @@ Telokine is a visual AI training sandbox — a 3D playground where you assemble 
 
 **Live UI demo:** [https://mateooo93.github.io/Telokine/](https://mateooo93.github.io/Telokine/)
 
-> The hosted demo is the frontend only. Physics and training require the Python backend running locally (see below).
+> The hosted demo is the **frontend only** (static files). GitHub Pages has no server and no CPU you can train on — physics and PPO always run on **your machine** when you start the backend locally (see below).
 
 ---
 
@@ -87,6 +87,29 @@ cd backend && uv run uvicorn telokine.server:app --port 8000
 ```
 
 The backend serves the built SPA from `dist/` on the same origin — no CORS setup needed.
+
+---
+
+## CPU vs GPU (and why GitHub Pages can't train)
+
+| Where | What runs |
+|-------|-----------|
+| **GitHub Pages** | Static UI only (HTML/JS). No Python, no MuJoCo, no training. |
+| **Your machine (backend)** | Full simulation + PPO training |
+
+When you run the backend locally:
+
+- **GPU (CUDA)** — used automatically if available and working (faster training).
+- **CPU** — automatic fallback if there is no GPU, or CUDA fails to initialize. Works on any laptop or server; training is slower but fully functional.
+- **MuJoCo physics** — always runs on CPU (parallel env processes), regardless of GPU.
+
+Force CPU-only training (useful on servers without a working GPU driver):
+
+```bash
+TELOKINE_DEVICE=cpu uv run uvicorn telokine.server:app --port 8000
+```
+
+The training overlay shows **CPU** or **GPU** once a session starts.
 
 ---
 
