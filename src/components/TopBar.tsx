@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { isGitHubPages } from '../lib/runtime'
 import { useSceneStore } from '../store/useSceneStore'
 import { useRunStore } from '../store/useRunStore'
@@ -10,10 +9,8 @@ import { startTrain } from '../net/trainSocket'
 import { stopTraining } from '../net/trainingControl'
 import { serializeScene } from '../viewport/types'
 import { rewardPayload, useProgramStore } from '../store/useProgramStore'
-import { LibraryPanel } from './LibraryPanel'
 
 export function TopBar() {
-  const [libraryOpen, setLibraryOpen] = useState(false)
   const running = useRunStore((s) => s.running)
   const runError = useRunStore((s) => s.error)
   const objects = useSceneStore((s) => s.objects)
@@ -32,22 +29,8 @@ export function TopBar() {
   const onPages = isGitHubPages()
 
   const hasAgent = objects.some((o) => o.role === 'agent')
-  // A build can only move through motors. Wheels/parts alone are dead weight
-  // until a Motor drives them — warn so people don't train a thing that can't move.
-  const saveBuild = useSceneStore((s) => s.saveBuild)
-  const loadBuild = useSceneStore((s) => s.loadBuild)
   const hasMotor = objects.some((o) => o.type === 'motor')
   const toolsEnabled = !running && !training && !!selectedId
-
-  const handleSaveBuild = () => {
-    saveBuild()
-    useRunStore.getState().setError(null)
-  }
-
-  const handleLoadBuild = () => {
-    if (loadBuild()) useRunStore.getState().setError(null)
-    else useRunStore.getState().setError('No saved build found. Hit Save build first.')
-  }
 
   const handleRun = () => {
     if (running) {
@@ -142,29 +125,6 @@ export function TopBar() {
         <span className="agent-hint">No motors yet — add a Motor (and a wheel/part) so your agent can actually move</span>
       )}
       <button
-        className="btn"
-        onClick={handleSaveBuild}
-        disabled={running || training}
-        title="Save your robot layout in the browser"
-      >
-        Save build
-      </button>
-      <button
-        className="btn"
-        onClick={handleLoadBuild}
-        disabled={running || training}
-        title="Load your last saved layout"
-      >
-        Load build
-      </button>
-      <button
-        className="btn"
-        onClick={() => setLibraryOpen(!libraryOpen)}
-        title="Saved policies and block configs (needs backend)"
-      >
-        Library
-      </button>
-      <button
         className={`btn run ${running ? 'stop' : ''}`}
         onClick={handleRun}
         disabled={(!hasAgent && !running) || training}
@@ -195,7 +155,6 @@ export function TopBar() {
           {training ? '■ Stop' : 'Train'}
         </button>
       )}
-      <LibraryPanel isOpen={libraryOpen} onClose={() => setLibraryOpen(false)} />
     </div>
   )
 }
