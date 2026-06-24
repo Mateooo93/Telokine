@@ -38,18 +38,3 @@ export function demoFrame(
     return { id: o.id, pos: o.position, rot }
   })
 }
-
-export function lerpAgentToward(
-  start: Vec3,
-  target: Vec3,
-  reach: number,
-  wobble: number,
-): Vec3 {
-  const t = Math.max(0, Math.min(1, reach))
-  const w = wobble * (1 - t)
-  return [
-    start[0] + (target[0] - start[0]) * t + (Math.random() - 0.5) * w,
-    start[1] + (target[1] - start[1]) * t * 0.15,
-    start[2] + (target[2] - start[2]) * t + (Math.random() - 0.5) * w,
-  ]
-}

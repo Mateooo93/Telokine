@@ -1,9 +1,15 @@
 import { useRunStore } from '../store/useRunStore'
 import { useTrainingStore } from '../store/useTrainingStore'
 import type { SerializedObject } from '../viewport/types'
-import { demoFrame, lerpAgentToward } from './demoFrames'
+import { DemoCubeEnv } from './demoEnv'
+import type { RewardBlock } from './demoReward'
 
 export const DEMO_POLICY_NAME = 'demo-policy'
+
+const ROLLOUT_STEPS = 512
+const PREVIEW_EVERY_EPISODES = 25
+const PREVIEW_STEPS = 45
+const WINDOW = 25
 
 let abort = false
 
@@ -15,20 +21,63 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }
 
-/** Browser-only fake training: telemetry + chained viewport previews, no backend. */
+function rollingPush(buf: number[], value: number, max = WINDOW): number[] {
+  const next = [...buf, value]
+  return next.length > max ? next.slice(next.length - max) : next
+}
+
+function mean(values: number[]): number {
+  if (!values.length) return 0
+  return values.reduce((a, b) => a + b, 0) / values.length
+}
+
+async function runPreview(
+  env: DemoCubeEnv,
+  train: ReturnType<typeof useTrainingStore.getState>,
+  run: ReturnType<typeof useRunStore.getState>,
+  episode: number,
+  meanReward: number,
+  successRate: number,
+): Promise<void> {
+  train.onPreview(episode)
+  env.reset()
+  run.setTransforms(env.frame())
+  await nextFrame()
+
+  for (let i = 0; i < PREVIEW_STEPS && !abort; i++) {
+    const action = env.policyAction()
+    const { terminated, truncated } = env.step(action)
+    run.setTransforms(env.frame())
+    await nextFrame()
+    if (terminated || truncated) break
+  }
+
+  train.onPreview(null)
+}
+
+/** Browser-only training loop — mirrors backend telemetry, previews, and reward blocks. */
 export async function startDemoTrain(
   scene: { objects: SerializedObject[] },
-  opts: { totalTimesteps?: number } = {},
+  opts: {
+    totalTimesteps?: number
+    rewards?: RewardBlock[]
+    episodeLength?: number
+    actionPower?: number
+    curriculum?: number
+  } = {},
 ): Promise<void> {
   abort = false
   const total = opts.totalTimesteps ?? 150_000
-  const objects = scene.objects
-  const agent = objects.find((o) => o.role === 'agent')
-  const target = objects.find((o) => o.role === 'target')
+  const rewards = opts.rewards ?? []
+  const episodeLength = opts.episodeLength ?? 250
+  const actionPower = opts.actionPower ?? 1
+  const curriculum = opts.curriculum ?? 0.25
 
   useTrainingStore.getState().setError(null)
   useTrainingStore.getState().reset()
 
+  const agent = scene.objects.find((o) => o.role === 'agent')
+  const target = scene.objects.find((o) => o.role === 'target')
   if (!agent || !target) {
     useTrainingStore.getState().setError('Add an agent cube and a target to simulate training.')
     return
@@ -40,41 +89,67 @@ export async function startDemoTrain(
   train.onDevice('demo')
   run.setRunning(true)
 
-  const startPos = [...agent.position] as [number, number, number]
-  const targetPos = [...target.position] as [number, number, number]
-  const previews = 12
-  const stepsPerPreview = 20
-  const t0 = performance.now()
+  let timesteps = 0
   let episode = 0
+  let lastPreviewEp = 0
+  let epRewards: number[] = []
+  let epSuccess: number[] = []
+  let epOob: number[] = []
+  const t0 = performance.now()
+
+  const env = new DemoCubeEnv({
+    objects: scene.objects,
+    rewards,
+    episodeLength,
+    actionPower,
+    curriculum,
+    skill: 0.05,
+    seed: 12345,
+  })
 
   try {
-    for (let p = 0; p < previews && !abort; p++) {
-      const progress = (p + 1) / previews
-      episode += Math.max(1, Math.round(total / previews / 500))
-      const success = Math.min(0.98, 0.04 + progress * 0.94)
-      const reward = -40 + progress * 90
-      const reach = 0.2 + progress * 0.78
+    while (timesteps < total && !abort) {
+      env.setSkill(Math.min(1, 0.08 + (timesteps / total) * 0.92))
 
-      train.onPreview(episode)
+      for (let rollStep = 0; rollStep < ROLLOUT_STEPS && timesteps < total && !abort; rollStep++) {
+        env.reset()
+        let epReward = 0
+        let reached = false
+        let oobMetric = 0
 
-      for (let s = 0; s <= stepsPerPreview && !abort; s++) {
-        const t = s / stepsPerPreview
-        const agentPos = lerpAgentToward(startPos, targetPos, reach * t + reach * 0.05, 0.12 * (1 - progress))
-        run.setTransforms(demoFrame(objects, agent.id, startPos, agentPos))
-        await nextFrame()
+        while (!abort) {
+          const action = env.policyAction()
+          const result = env.step(action)
+          epReward += result.reward
+          reached = result.info.reached
+          oobMetric = result.info.out_of_bounds_metric
+          timesteps += 1
+          if (result.terminated || result.truncated || timesteps >= total) break
+        }
+
+        episode += 1
+        epRewards = rollingPush(epRewards, epReward)
+        epSuccess = rollingPush(epSuccess, reached ? 1 : 0)
+        epOob = rollingPush(epOob, oobMetric)
+
+        if (episode - lastPreviewEp >= PREVIEW_EVERY_EPISODES) {
+          lastPreviewEp = episode
+          await runPreview(env, useTrainingStore.getState(), useRunStore.getState(), episode, mean(epRewards), mean(epSuccess))
+        }
       }
 
-      train.onPreview(null)
+      if (abort) break
 
       train.onTelemetry({
-        step: Math.floor(total * progress),
-        reward,
-        success_rate: success,
+        step: timesteps,
+        reward: mean(epRewards),
+        success_rate: mean(epSuccess),
         episode,
         elapsed: (performance.now() - t0) / 1000,
-        progress,
+        progress: Math.min(1, timesteps / total),
+        out_of_bounds_metric: mean(epOob),
       })
-      // Next preview starts immediately — no pause between simulations.
+      await nextFrame()
     }
 
     if (!abort) {

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 # Catalog shown verbatim in the frontend's block editor (step 5).
 BLOCK_CATALOG: dict[str, list[str]] = {
-    "reward": ["Approach Target", "Reach Target", "Stay Upright", "Move Forward"],
+    "reward": ["Approach Target", "Attraction", "Reach Target", "Stay Upright", "Move Forward"],
     "penalty": ["Fall", "Touch Wall", "Move Backward", "Exertion"],
 }
 
@@ -60,7 +60,7 @@ def evaluate(blocks: list[RewardBlock], state: dict) -> float:
 
 
 def _term(name: str, state: dict) -> float:
-    if name == "Approach Target":
+    if name in ("Approach Target", "Attraction"):
         return max(-1.0, min(1.0, float(state.get("progress", 0.0)))) * 0.5
     if name == "Reach Target":
         return 10.0 if state.get("reached") else 0.0

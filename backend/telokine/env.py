@@ -87,16 +87,11 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
         )
         self._target_pos = np.array(self._target_world_pos(), dtype=np.float64)
 
-        # How the agent is actuated. Real robots (and every standard MuJoCo RL
-        # env like Ant/Humanoid) move ONLY through their actuators — joint
-        # torques that drive wheels/legs against the ground. There is no magic
-        # body force: a build with no motors has nothing to actuate and so it
-        # cannot move on its own. We still expose a 1-D dummy action when there
-        # are no motors purely to keep the RL action space valid; it drives
-        # nothing. Add a Motor (and a wheel/part for it to turn) to make it move.
+        # How the agent is actuated. With motors -> joint torques. Without ->
+        # 6-D body attraction forces so a bare cube can still be trained.
         self._n_motors = int(self.model.nu)
         self.has_motors = self._n_motors > 0
-        self.act_dim = self._n_motors if self.has_motors else 1
+        self.act_dim = self._n_motors if self.has_motors else self.ACT_DIM
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self.OBS_DIM,), dtype=np.float32
@@ -172,11 +167,16 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
             # The policy commands the motors only. The body never gets a free
             # push, so it moves solely by driving its joints, like a real robot.
             self.data.ctrl[:] = action[: self._n_motors]
-        # No motors: nothing to actuate. The dummy action drives nothing, so the
-        # agent stays put — a bare rigid body cannot locomote on its own.
+        else:
+            # Body attraction / thruster: 6-D force+torque on the agent so a
+            # bare cube can still learn to reach the target from reward blocks.
+            self.data.xfrc_applied[self._agent_bid, :3] = action[0:3] * self.max_force
+            self.data.xfrc_applied[self._agent_bid, 3:6] = action[3:6] * self.max_torque
 
         for _ in range(self.SUBSTEPS):
             mujoco.mj_step(self.model, self.data)
+
+        self.data.xfrc_applied[:] = 0.0
 
         self._step += 1
         dist = self._dist_to_target()
@@ -196,7 +196,7 @@ class CubeAgentEnv(_GymEnv):  # type: ignore[misc, valid-type]
             "upright": float(upright),
             "fallen": bool(upright < 0.25 or float(pos[1]) < 0.2),
             "forward_delta": forward_delta,
-            "action_energy": float(np.sum(np.square(action[: self._n_motors]))) if self.has_motors else 0.0,
+            "action_energy": float(np.sum(np.square(action[: self.act_dim]))),
         }
         reward = evaluate(self._reward_blocks, state)
         self._prev_dist = dist

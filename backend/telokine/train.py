@@ -171,8 +171,8 @@ class _StopTraining(Exception):
 class _TelemetryCallback(BaseCallback):
     """Streams reward/success telemetry and periodic live-preview frames."""
 
-    PREVIEW_EVERY_EPISODES = 25  # checkpoint preview every N episodes ("tries")
-    PREVIEW_STEPS = 45           # env steps per preview (shorter = less UI load)
+    PREVIEW_RUNS = 4             # consecutive tries per batch — no pause between them
+    PREVIEW_STEPS = 250          # up to one full episode per try
     WINDOW = 25                  # rolling-mean window for reward/success
 
     def __init__(
@@ -198,7 +198,6 @@ class _TelemetryCallback(BaseCallback):
         self._episode_count = 0
         self._start = 0.0
         self._rollouts_seen = 0
-        self._last_preview_ep = 0
 
         # Separate single env used only for periodic live previews of the policy.
         self._preview_env = None
@@ -242,11 +241,8 @@ class _TelemetryCallback(BaseCallback):
                 }
             )
 
-            # Every ~N episodes ("tries"), pause and play back the current policy
-            # so the user watches the checkpoint behave — and sees it improve.
-            if self._episode_count - self._last_preview_ep >= self.PREVIEW_EVERY_EPISODES:
-                self._last_preview_ep = self._episode_count
-                self._preview()
+            # After each rollout, play back several tries back-to-back (no gap).
+            self._preview()
 
         return True
 
@@ -256,9 +252,7 @@ class _TelemetryCallback(BaseCallback):
         if self._preview_env is None:
             self._preview_env = CubeAgentEnv(self.scene, rewards=self.rewards, seed=12345)
         env = self._preview_env
-        obs, _ = env.reset()
         succ = float(np.mean(self._ep_success)) if self._ep_success else 0.0
-        # Tell the UI a checkpoint preview is starting so it can label it.
         self._on_telemetry(
             {
                 "type": "preview",
@@ -267,13 +261,20 @@ class _TelemetryCallback(BaseCallback):
                 "success_rate": succ,
             }
         )
-        self._on_telemetry({"type": "frame", "objects": env.frame()})
-        for _ in range(self.PREVIEW_STEPS):
-            action, _ = self.model.predict(obs, deterministic=True)
-            obs, _, term, trunc, _ = env.step(action)
-            self._on_telemetry({"type": "frame", "objects": env.frame()})
-            if term or trunc:
+        for _run in range(self.PREVIEW_RUNS):
+            if self._should_stop():
                 break
+            obs, _ = env.reset()
+            self._on_telemetry({"type": "frame", "objects": env.frame()})
+            for _ in range(self.PREVIEW_STEPS):
+                if self._should_stop():
+                    break
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, _, term, trunc, _ = env.step(action)
+                self._on_telemetry({"type": "frame", "objects": env.frame()})
+                if term or trunc:
+                    break
+            # Next try starts immediately — no sleep, no preview_end between runs.
         self._on_telemetry({"type": "preview_end", "episode": int(self._episode_count)})
 
 

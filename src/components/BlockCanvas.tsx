@@ -21,7 +21,7 @@ import { rewardPayload, useProgramStore, type BlockKind, type ProgramBlock } fro
 const CATALOG: { kind: BlockKind; label: string; blocks: string[] }[] = [
   { kind: 'sensor', label: 'Sensors', blocks: ['Distance To Target', 'Agent Velocity', 'Upright Vector', 'Contact State'] },
   { kind: 'logic', label: 'Logic', blocks: ['Normalize', 'Gate If Upright', 'Distance Delta'] },
-  { kind: 'reward', label: 'Rewards', blocks: ['Approach Target', 'Reach Target', 'Stay Upright', 'Move Forward'] },
+  { kind: 'reward', label: 'Rewards', blocks: ['Attraction', 'Approach Target', 'Reach Target', 'Stay Upright', 'Move Forward'] },
   { kind: 'penalty', label: 'Penalties', blocks: ['Fall', 'Touch Wall', 'Move Backward', 'Exertion'] },
   { kind: 'control', label: 'Control', blocks: ['PPO Policy', 'Torque Mixer', 'Joint Limits'] },
 ]
@@ -40,6 +40,7 @@ const BLOCK_INFO: Record<string, string> = {
   'Gate If Upright': 'Only passes the signal through while the agent stays upright.',
   'Distance Delta': 'How much closer the agent got since the last step (progress).',
   // rewards
+  Attraction: 'Pulls the agent toward the target — rewards every step of progress.',
   'Approach Target': 'Rewards every bit of progress made toward the target.',
   'Reach Target': 'Big bonus the moment the agent reaches the target.',
   'Stay Upright': 'Rewards keeping the agent balanced and level.',

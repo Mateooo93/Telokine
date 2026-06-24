@@ -1,6 +1,7 @@
 import { useRunStore } from '../store/useRunStore'
 import type { SerializedObject } from '../viewport/types'
-import { demoFrame, lerpAgentToward } from './demoFrames'
+import { DemoCubeEnv } from './demoEnv'
+import type { RewardBlock } from './demoReward'
 
 let abort = false
 
@@ -12,13 +13,15 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }
 
-/** Play back a fake trained rollout in the browser (GitHub Pages demo). */
-export async function startDemoRun(scene: { objects: SerializedObject[] }): Promise<void> {
+/** Replay a trained demo policy using the same env + reward blocks as simulate train. */
+export async function startDemoRun(
+  scene: { objects: SerializedObject[] },
+  opts: { rewards?: RewardBlock[]; episodeLength?: number; actionPower?: number } = {},
+): Promise<void> {
   abort = false
-  const objects = scene.objects
-  const agent = objects.find((o) => o.role === 'agent')
-  const target = objects.find((o) => o.role === 'target')
   const run = useRunStore.getState()
+  const agent = scene.objects.find((o) => o.role === 'agent')
+  const target = scene.objects.find((o) => o.role === 'target')
 
   if (!agent || !target) {
     run.setError('Add an agent cube and a target.')
@@ -28,16 +31,27 @@ export async function startDemoRun(scene: { objects: SerializedObject[] }): Prom
   run.setError(null)
   run.setRunning(true)
 
-  const startPos = [...agent.position] as [number, number, number]
-  const targetPos = [...target.position] as [number, number, number]
-  const steps = 36
+  const env = new DemoCubeEnv({
+    objects: scene.objects,
+    rewards: opts.rewards ?? [],
+    episodeLength: opts.episodeLength ?? 250,
+    actionPower: opts.actionPower ?? 1,
+    curriculum: 0,
+    skill: 1,
+    seed: 54321,
+  })
 
   try {
-    for (let s = 0; s <= steps && !abort; s++) {
-      const t = s / steps
-      const agentPos = lerpAgentToward(startPos, targetPos, t, 0.04 * (1 - t))
-      run.setTransforms(demoFrame(objects, agent.id, startPos, agentPos))
+    env.reset()
+    run.setTransforms(env.frame())
+    await nextFrame()
+
+    for (let i = 0; i < 400 && !abort; i++) {
+      const action = env.policyAction()
+      const { terminated, truncated } = env.step(action)
+      run.setTransforms(env.frame())
       await nextFrame()
+      if (terminated || truncated) break
     }
   } finally {
     run.setRunning(false)

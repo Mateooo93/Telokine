@@ -58,13 +58,13 @@ function connect(from: ProgramBlock, to: ProgramBlock): ProgramConnection {
 function reachTemplate() {
   const distance = block('sensor', 'Distance To Target', 24)
   const velocity = block('sensor', 'Agent Velocity', 132)
-  const approach = block('reward', 'Approach Target', 48, 1.2)
+  const attraction = block('reward', 'Attraction', 48, 1.2)
   const reach = block('reward', 'Reach Target', 156, 4)
   const exertion = block('penalty', 'Exertion', 264, 0.4)
   const policy = block('control', 'PPO Policy', 104)
   return {
-    blocks: [distance, velocity, approach, reach, exertion, policy],
-    connections: [connect(distance, approach), connect(distance, reach), connect(velocity, exertion), connect(approach, policy), connect(reach, policy), connect(exertion, policy)],
+    blocks: [distance, velocity, attraction, reach, exertion, policy],
+    connections: [connect(distance, attraction), connect(distance, reach), connect(velocity, exertion), connect(attraction, policy), connect(reach, policy), connect(exertion, policy)],
   }
 }
 

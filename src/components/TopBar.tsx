@@ -40,7 +40,11 @@ export function TopBar() {
     }
     const scene = serializeScene(objects)
     if (onPages && policyName === DEMO_POLICY_NAME) {
-      startDemoRun(scene).catch((e: unknown) => {
+      startDemoRun(scene, {
+        rewards: rewardPayload(blocks),
+        episodeLength,
+        actionPower,
+      }).catch((e: unknown) => {
         useRunStore.getState().setError(e instanceof Error ? e.message : String(e))
       })
       return
@@ -72,7 +76,13 @@ export function TopBar() {
       stopTraining()
       return
     }
-    startDemoTrain(serializeScene(objects), { totalTimesteps }).catch((e: unknown) => {
+    startDemoTrain(serializeScene(objects), {
+      totalTimesteps,
+      rewards: rewardPayload(blocks),
+      episodeLength,
+      actionPower,
+      curriculum,
+    }).catch((e: unknown) => {
       useTrainingStore.getState().setError(e instanceof Error ? e.message : String(e))
     })
   }
