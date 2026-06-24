@@ -2,7 +2,7 @@
 
 The user presses Train; this is what happens behind the curtain:
 
-    8 parallel CubeAgentEnv instances  (CPU, one per process)
+    4 parallel CubeAgentEnv instances  (CPU, one per process)
         -> PPO with an MLP policy       (GPU)
         -> a callback streams telemetry (reward, success rate, progress) and
            periodic live-preview frames of the learning policy back to the UI
@@ -22,6 +22,24 @@ import numpy as np
 
 TelemetryFn = Callable[[dict], None]
 StopFn = Callable[[], bool]
+
+ML_INSTALL_HINT = "Training deps missing. Run: cd backend && uv sync --extra ml"
+
+
+def _training_n_envs() -> int:
+    """Parallel env count. Lower = less RAM/CPU (default 4). Override with TELOKINE_N_ENVS."""
+    raw = os.environ.get("TELOKINE_N_ENVS", "4").strip()
+    try:
+        return max(1, min(8, int(raw)))
+    except ValueError:
+        return 4
+
+
+def _require_ml() -> None:
+    try:
+        import stable_baselines3  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(ML_INSTALL_HINT) from exc
 
 
 def pick_device() -> str:
@@ -96,10 +114,11 @@ def train(
     frame, done, error). ``should_stop`` is polled each env step; returning
     True aborts training cleanly.
     """
+    _require_ml()
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
 
-    n_envs = 8
+    n_envs = _training_n_envs()
     n_steps = 512
     env = _make_vec_env(scene, rewards=rewards, n_envs=n_envs, base_seed=0)
 
@@ -152,9 +171,8 @@ class _StopTraining(Exception):
 class _TelemetryCallback(BaseCallback):
     """Streams reward/success telemetry and periodic live-preview frames."""
 
-    PREVIEW_EVERY_EPISODES = 10  # show a checkpoint preview every N episodes ("tries")
-    PREVIEW_STEPS = 90           # env steps per preview
-    PREVIEW_FPS = 35.0           # pace preview frames so they're actually watchable
+    PREVIEW_EVERY_EPISODES = 25  # checkpoint preview every N episodes ("tries")
+    PREVIEW_STEPS = 45           # env steps per preview (shorter = less UI load)
     WINDOW = 25                  # rolling-mean window for reward/success
 
     def __init__(
@@ -250,12 +268,10 @@ class _TelemetryCallback(BaseCallback):
             }
         )
         self._on_telemetry({"type": "frame", "objects": env.frame()})
-        dt = 1.0 / self.PREVIEW_FPS
         for _ in range(self.PREVIEW_STEPS):
             action, _ = self.model.predict(obs, deterministic=True)
             obs, _, term, trunc, _ = env.step(action)
             self._on_telemetry({"type": "frame", "objects": env.frame()})
-            time.sleep(dt)  # pace playback so the checkpoint is watchable
             if term or trunc:
                 break
         self._on_telemetry({"type": "preview_end", "episode": int(self._episode_count)})
@@ -280,6 +296,8 @@ def rollout_policy(
     """
     from stable_baselines3 import PPO
     from telokine.env import CubeAgentEnv
+
+    _require_ml()
 
     frame_dt = 1.0 / 60.0
     env = CubeAgentEnv(scene, seed=seed)

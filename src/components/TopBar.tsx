@@ -1,9 +1,13 @@
 import { useState } from 'react'
+import { isGitHubPages } from '../lib/runtime'
 import { useSceneStore } from '../store/useSceneStore'
 import { useRunStore } from '../store/useRunStore'
 import { useTrainingStore } from '../store/useTrainingStore'
+import { DEMO_POLICY_NAME, startDemoTrain } from '../net/demoTrain'
+import { startDemoRun, stopDemoRun } from '../net/demoRun'
 import { startRun, stopRun } from '../net/simSocket'
-import { startTrain, stopTrain } from '../net/trainSocket'
+import { startTrain } from '../net/trainSocket'
+import { stopTraining } from '../net/trainingControl'
 import { serializeScene } from '../viewport/types'
 import { rewardPayload, useProgramStore } from '../store/useProgramStore'
 import { LibraryPanel } from './LibraryPanel'
@@ -25,6 +29,7 @@ export function TopBar() {
   const episodeLength = useProgramStore((s) => s.episodeLength)
   const actionPower = useProgramStore((s) => s.actionPower)
   const curriculum = useProgramStore((s) => s.curriculum)
+  const onPages = isGitHubPages()
 
   const hasAgent = objects.some((o) => o.role === 'agent')
   // A build can only move through motors. Wheels/parts alone are dead weight
@@ -46,17 +51,25 @@ export function TopBar() {
 
   const handleRun = () => {
     if (running) {
+      stopDemoRun()
       stopRun()
       return
     }
-    startRun(serializeScene(objects), { policy: policyName ?? undefined }).catch((e: unknown) => {
+    const scene = serializeScene(objects)
+    if (onPages && policyName === DEMO_POLICY_NAME) {
+      startDemoRun(scene).catch((e: unknown) => {
+        useRunStore.getState().setError(e instanceof Error ? e.message : String(e))
+      })
+      return
+    }
+    startRun(scene, { policy: policyName ?? undefined }).catch((e: unknown) => {
       useRunStore.getState().setError(e instanceof Error ? e.message : String(e))
     })
   }
 
   const handleTrain = () => {
     if (training) {
-      stopTrain()
+      stopTraining()
       return
     }
     useTrainingStore.getState().reset()
@@ -67,6 +80,16 @@ export function TopBar() {
       actionPower,
       curriculum,
     }).catch((e: unknown) => {
+      useTrainingStore.getState().setError(e instanceof Error ? e.message : String(e))
+    })
+  }
+
+  const handleSimulateTrain = () => {
+    if (training) {
+      stopTraining()
+      return
+    }
+    startDemoTrain(serializeScene(objects), { totalTimesteps }).catch((e: unknown) => {
       useTrainingStore.getState().setError(e instanceof Error ? e.message : String(e))
     })
   }
@@ -106,10 +129,16 @@ export function TopBar() {
 
       <div className="spacer" />
       {(runError || trainError) && <span className="err">{trainError ?? runError}</span>}
-      {!hasAgent && !running && !training && (
+      {onPages && !hasAgent && !running && !training && (
         <span className="agent-hint">Add a Cube or a starter robot to begin</span>
       )}
-      {hasAgent && !hasMotor && !running && !training && (
+      {onPages && hasAgent && !running && !training && (
+        <span className="agent-hint">Demo mode — Simulate train runs in your browser only</span>
+      )}
+      {!onPages && !hasAgent && !running && !training && (
+        <span className="agent-hint">Add a Cube or a starter robot to begin</span>
+      )}
+      {!onPages && hasAgent && !hasMotor && !running && !training && (
         <span className="agent-hint">No motors yet — add a Motor (and a wheel/part) so your agent can actually move</span>
       )}
       <button
@@ -139,18 +168,33 @@ export function TopBar() {
         className={`btn run ${running ? 'stop' : ''}`}
         onClick={handleRun}
         disabled={(!hasAgent && !running) || training}
-        title={runTitle}
+        title={
+          onPages && policyName === DEMO_POLICY_NAME
+            ? 'Run the demo policy animation'
+            : runTitle
+        }
       >
         {running ? '■ Stop' : runLabel}
       </button>
-      <button
-        className={`btn primary ${training ? 'stop' : ''}`}
-        onClick={handleTrain}
-        disabled={(!hasAgent && !training) || running}
-        title={hasAgent ? 'Train the agent with reinforcement learning' : 'Add a Cube (agent) to train'}
-      >
-        {training ? '■ Stop' : 'Train'}
-      </button>
+      {onPages ? (
+        <button
+          className={`btn primary ${training ? 'stop' : ''}`}
+          onClick={handleSimulateTrain}
+          disabled={(!hasAgent && !training) || running}
+          title="Fake training in the browser — no CPU/GPU, no backend"
+        >
+          {training ? '■ Stop' : 'Simulate train'}
+        </button>
+      ) : (
+        <button
+          className={`btn primary ${training ? 'stop' : ''}`}
+          onClick={handleTrain}
+          disabled={(!hasAgent && !training) || running}
+          title={hasAgent ? 'Train the agent with reinforcement learning' : 'Add a Cube (agent) to train'}
+        >
+          {training ? '■ Stop' : 'Train'}
+        </button>
+      )}
       <LibraryPanel isOpen={libraryOpen} onClose={() => setLibraryOpen(false)} />
     </div>
   )

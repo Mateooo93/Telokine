@@ -22,6 +22,15 @@ interface SelectionBox {
   currentY: number
 }
 
+function webGLAvailable(): boolean {
+  try {
+    const canvas = document.createElement('canvas')
+    return !!(canvas.getContext('webgl2') || canvas.getContext('webgl'))
+  } catch {
+    return false
+  }
+}
+
 /**
  * The 3D viewport — Layer 1.
  * - Editor mode: objects are driven by the zustand scene store; a transform
@@ -47,7 +56,8 @@ export function Viewport() {
   const transforms = useRunStore((s) => s.transforms)
   const [hoverHit, setHoverHit] = useState<SurfaceHit | null>(null)
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [glError, setGlError] = useState<string | null>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
 
   // Esc bails out of an in-progress placement.
   useEffect(() => {
@@ -61,6 +71,12 @@ export function Viewport() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [placementTool, cancelPlacement])
+
+  useEffect(() => {
+    if (!webGLAvailable()) {
+      setGlError('WebGL is unavailable in this browser or GPU driver.')
+    }
+  }, [])
 
   // Track each object's rendered group so the gizmo can attach to the selected
   // one. This is a mutable ref (NOT state) — mutations here must not trigger a
@@ -137,7 +153,7 @@ export function Viewport() {
     // Only start selection box if no object was clicked and not in placement mode
     if (placementTool || running || selectedId) return
     
-    const rect = canvasRef.current?.getBoundingClientRect()
+    const rect = stageRef.current?.getBoundingClientRect()
     if (!rect) return
     
     const x = e.clientX - rect.left
@@ -154,7 +170,7 @@ export function Viewport() {
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!selectionBox) return
     
-    const rect = canvasRef.current?.getBoundingClientRect()
+    const rect = stageRef.current?.getBoundingClientRect()
     if (!rect) return
     
     const x = e.clientX - rect.left
@@ -173,7 +189,7 @@ export function Viewport() {
     
     // Only select if the box has meaningful size (at least 5px)
     if ((maxX - minX) > 5 && (maxY - minY) > 5) {
-      const rect = canvasRef.current?.getBoundingClientRect()
+      const rect = stageRef.current?.getBoundingClientRect()
       if (rect) {
         // Convert screen coordinates to normalized device coordinates
         const ndcX1 = (minX / rect.width) * 2 - 1
@@ -218,17 +234,37 @@ export function Viewport() {
   return (
     <>
       <div
-        style={{ position: 'relative', width: '100%', height: '100%' }}
+        ref={stageRef}
+        className="viewport-stage"
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleCanvasMouseMove}
         onMouseUp={handleCanvasMouseUp}
         onMouseLeave={() => setSelectionBox(null)}
       >
+        {glError ? (
+          <div className="viewport-fallback">
+            <div>
+              <b>3D view unavailable</b>
+              {glError}
+              <br />
+              Try another browser, enable hardware acceleration, or run locally with <code>npm run dev</code>.
+            </div>
+          </div>
+        ) : (
         <Canvas
           shadows
           dpr={[1, 2]}
           camera={{ position: [7, 6, 7], fov: 50 }}
-          style={{ cursor: placementTool ? 'crosshair' : selectionBox ? 'crosshair' : undefined }}
+          gl={{ failIfMajorPerformanceCaveat: false }}
+          style={{
+            width: '100%',
+            height: '100%',
+            cursor: placementTool ? 'crosshair' : selectionBox ? 'crosshair' : undefined,
+          }}
+          onCreated={({ gl }) => {
+            const lose = () => setGlError('WebGL context was lost. Refresh the page.')
+            gl.domElement.addEventListener('webglcontextlost', lose as EventListener, { once: true })
+          }}
           onPointerMissed={() => {
             if (placementTool) return
             if (selectionBox) return
@@ -308,7 +344,8 @@ export function Viewport() {
       )}
 
       <CameraControls />
-      </Canvas>
+        </Canvas>
+        )}
 
       {/* Selection box visual overlay */}
       {selectionBox && (

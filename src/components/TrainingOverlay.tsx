@@ -1,5 +1,5 @@
 import { useTrainingStore } from '../store/useTrainingStore'
-import { stopTrain } from '../net/trainSocket'
+import { stopTraining } from '../net/trainingControl'
 import { RewardGraph } from './RewardGraph'
 
 /**
@@ -33,9 +33,11 @@ export function TrainingOverlay() {
             <span className="muted">· {elapsed.toFixed(0)}s</span>
             <span className="muted">· {episodes} tries</span>
             {device && (
-              <span className="muted">· {device === 'cuda' ? 'GPU' : 'CPU'}</span>
+              <span className="muted">
+                · {device === 'demo' ? 'Demo sim' : device === 'cuda' ? 'GPU' : 'CPU'}
+              </span>
             )}
-            <button className="btn mini danger" onClick={stopTrain}>
+            <button className="btn mini danger" onClick={stopTraining}>
               Stop
             </button>
           </>
@@ -66,7 +68,11 @@ export function TrainingOverlay() {
 
       {status === 'done' && (
         <div className="train-hint">
-          {policyName ? 'Press ▶ Run trained to watch the cube reach the target.' : 'Policy saved.'}
+          {policyName
+            ? device === 'demo'
+              ? 'Press ▶ Run trained to replay the demo rollout.'
+              : 'Press ▶ Run trained to watch the cube reach the target.'
+            : 'Policy saved.'}
         </div>
       )}
     </div>

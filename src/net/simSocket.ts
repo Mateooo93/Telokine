@@ -7,7 +7,7 @@ import type { SerializedObject } from '../viewport/types'
 // rollout and mirrors the streamed transforms. A single long-lived connection
 // is reused across runs.
 
-const SIM_URL = 'ws://localhost:8002/ws/sim'
+const SIM_URL = 'ws://localhost:8000/ws/sim'
 
 let ws: WebSocket | null = null
 let connecting: Promise<void> | null = null

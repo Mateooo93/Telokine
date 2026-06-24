@@ -36,7 +36,22 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "telokine-backend", "version": "0.1.0"}
+    ml_ready = True
+    ml_error: str | None = None
+    try:
+        import stable_baselines3  # noqa: F401
+        import mujoco  # noqa: F401
+    except ImportError as exc:
+        ml_ready = False
+        ml_error = str(exc)
+    return {
+        "status": "ok",
+        "service": "telokine-backend",
+        "version": "0.1.0",
+        "training_ready": ml_ready,
+        "training_hint": None if ml_ready else "cd backend && uv sync --extra ml",
+        "ml_error": ml_error,
+    }
 
 
 @app.get("/policies/{name}")
