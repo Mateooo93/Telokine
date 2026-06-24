@@ -1,6 +1,7 @@
 # Telokine
 
-train a robot without writing code. build stuff in 3d, connect motors, drag reward blocks, hit train, watch it learn
+train a robot without writing code. build 3d agents using the simple playground i made, this is interesting if you want to learn about reenforcement training without having to know how to code.
+multiple features are avbailable aswell as a tutorial of you need help! Have fun!
 
 demo (ui only): https://mateooo93.github.io/Telokine/  
 code: https://github.com/Mateooo93/Telokine
@@ -24,7 +25,7 @@ uv run uvicorn telokine.server:app --port 8000
 
 open http://localhost:1420, load the walker template, hit train then run trained
 
-no gpu needed it falls back to cpu
+no gpu needed it falls back to your cpu
 
 ## quick tips
 
