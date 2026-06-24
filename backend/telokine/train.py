@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import time
 import functools
+import threading
 from collections import deque
 from typing import Callable, Any
 
@@ -100,6 +101,40 @@ def _make_vec_env(scene: dict, rewards: list[dict], n_envs: int, base_seed: int)
     return SubprocVecEnv(fns, start_method="spawn")
 
 
+def _warmup_preview(
+    scene: dict,
+    rewards: list[dict],
+    on_telemetry: TelemetryFn,
+    should_stop: StopFn,
+    stop_when: Callable[[], bool] | None = None,
+) -> None:
+    """Stream random-action frames until ``stop_when`` returns True (or the user stops)."""
+    from telokine.env import CubeAgentEnv
+
+    on_telemetry(
+        {
+            "type": "preview",
+            "episode": 0,
+            "reward": 0.0,
+            "success_rate": 0.0,
+        }
+    )
+    env = CubeAgentEnv(scene, rewards=rewards, seed=999)
+    obs, _ = env.reset()
+    on_telemetry({"type": "frame", "objects": env.frame()})
+    while True:
+        if should_stop():
+            break
+        if stop_when is not None and stop_when():
+            break
+        action = env.action_space.sample()
+        obs, _, term, trunc, _ = env.step(action)
+        on_telemetry({"type": "frame", "objects": env.frame()})
+        if term or trunc:
+            obs, _ = env.reset()
+            on_telemetry({"type": "frame", "objects": env.frame()})
+
+
 def train(
     scene: dict,
     rewards: list[dict],
@@ -114,14 +149,40 @@ def train(
     frame, done, error). ``should_stop`` is polled each env step; returning
     True aborts training cleanly.
     """
+    preview_handoff = threading.Event()
+    warmup_thread = threading.Thread(
+        target=_warmup_preview,
+        args=(scene, rewards, on_telemetry, should_stop),
+        kwargs={"stop_when": preview_handoff.is_set},
+        daemon=True,
+    )
+    warmup_thread.start()
+
+    n_envs = _training_n_envs()
+    env_box: dict[str, Any] = {}
+    spawn_err: dict[str, BaseException] = {}
+
+    def _spawn() -> None:
+        try:
+            env_box["env"] = _make_vec_env(scene, rewards=rewards, n_envs=n_envs, base_seed=0)
+        except BaseException as exc:  # noqa: BLE001
+            spawn_err["err"] = exc
+
+    spawn_thread = threading.Thread(target=_spawn, daemon=True)
+    spawn_thread.start()
+
     _require_ml()
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
 
-    n_envs = _training_n_envs()
-    n_steps = 512
-    env = _make_vec_env(scene, rewards=rewards, n_envs=n_envs, base_seed=0)
+    spawn_thread.join()
+    if "err" in spawn_err:
+        preview_handoff.set()
+        warmup_thread.join(timeout=1.0)
+        raise spawn_err["err"]
+    env = env_box["env"]
 
+    n_steps = 512
     device = pick_device()
     on_telemetry({"type": "device", "device": device})
 
@@ -146,8 +207,8 @@ def train(
         on_telemetry=on_telemetry,
         should_stop=should_stop,
         total_timesteps=total_timesteps,
-        # n_counts VecEnv steps; a PPO rollout is n_steps of them.
         rollout_steps=n_steps,
+        on_preview_ready=preview_handoff.set,
     )
 
     try:
@@ -155,6 +216,8 @@ def train(
     except _StopTraining:
         pass  # user requested stop — still save what we have
     finally:
+        preview_handoff.set()
+        warmup_thread.join(timeout=1.0)
         env.close()
 
     os.makedirs("policies", exist_ok=True)
@@ -169,11 +232,9 @@ class _StopTraining(Exception):
 
 
 class _TelemetryCallback(BaseCallback):
-    """Streams reward/success telemetry and periodic live-preview frames."""
+    """Streams telemetry and a continuously-stepped live preview (no gaps)."""
 
-    PREVIEW_RUNS = 4             # consecutive tries per batch — no pause between them
-    PREVIEW_STEPS = 250          # up to one full episode per try
-    WINDOW = 25                  # rolling-mean window for reward/success
+    WINDOW = 25  # rolling-mean window for reward/success
 
     def __init__(
         self,
@@ -183,6 +244,7 @@ class _TelemetryCallback(BaseCallback):
         should_stop: StopFn,
         total_timesteps: int,
         rollout_steps: int,
+        on_preview_ready: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self.scene = scene
@@ -191,6 +253,7 @@ class _TelemetryCallback(BaseCallback):
         self._should_stop = should_stop
         self.total_timesteps = total_timesteps
         self.rollout_steps = rollout_steps
+        self._on_preview_ready = on_preview_ready
 
         self._ep_rewards: deque[float] = deque(maxlen=self.WINDOW)
         self._ep_success: deque[float] = deque(maxlen=self.WINDOW)
@@ -199,15 +262,37 @@ class _TelemetryCallback(BaseCallback):
         self._start = 0.0
         self._rollouts_seen = 0
 
-        # Separate single env used only for periodic live previews of the policy.
         self._preview_env = None
+        self._preview_obs = None
+        self._preview_open = False
+        self._preview_lock = threading.Lock()
+        self._grad_gap_thread: threading.Thread | None = None
+
+    def _on_rollout_end(self) -> None:
+        """Keep the viewport moving while PPO runs gradient updates (no env steps)."""
+        last = self.n_calls
+
+        def _animate() -> None:
+            while self.n_calls == last and not self._should_stop():
+                self._step_preview_random()
+                time.sleep(1.0 / 30.0)
+
+        self._grad_gap_thread = threading.Thread(target=_animate, daemon=True)
+        self._grad_gap_thread.start()
 
     def _on_training_start(self) -> None:
         self._start = time.time()
         self._on_telemetry({"type": "started", "total_timesteps": self.total_timesteps})
+        self._ensure_preview()
+        self._open_preview()
+        self._step_preview()
+        if self._on_preview_ready is not None:
+            self._on_preview_ready()
+
+    def _on_training_end(self) -> None:
+        self._close_preview()
 
     def _on_step(self) -> bool:
-        # Honor a stop request from the UI.
         if self._should_stop():
             raise _StopTraining()
 
@@ -220,7 +305,9 @@ class _TelemetryCallback(BaseCallback):
                 self._ep_success.append(1.0 if info.get("reached") else 0.0)
                 self._ep_oob.append(float(info.get("out_of_bounds_metric", 0.0)))
 
-        # Emit telemetry once per PPO rollout (every rollout_steps env steps).
+        # Advance the visible sim every PPO step — never hold a stale frame.
+        self._step_preview()
+
         if self.n_calls % self.rollout_steps == 0:
             self._rollouts_seen += 1
             elapsed = time.time() - self._start
@@ -241,17 +328,45 @@ class _TelemetryCallback(BaseCallback):
                 }
             )
 
-            # After each rollout, play back several tries back-to-back (no gap).
-            self._preview()
-
         return True
 
-    def _preview(self) -> None:
+    def _ensure_preview(self) -> None:
         from telokine.env import CubeAgentEnv
 
-        if self._preview_env is None:
-            self._preview_env = CubeAgentEnv(self.scene, rewards=self.rewards, seed=12345)
-        env = self._preview_env
+        if self._preview_env is not None:
+            return
+        self._preview_env = CubeAgentEnv(self.scene, rewards=self.rewards, seed=12345)
+        self._preview_obs, _ = self._preview_env.reset()
+        self._on_telemetry({"type": "frame", "objects": self._preview_env.frame()})
+
+    def _step_preview_random(self) -> None:
+        with self._preview_lock:
+            if self._preview_env is None:
+                self._ensure_preview()
+                self._open_preview()
+            action = self._preview_env.action_space.sample()
+            self._preview_obs, _, term, trunc, _ = self._preview_env.step(action)
+            self._on_telemetry({"type": "frame", "objects": self._preview_env.frame()})
+            if term or trunc:
+                self._preview_obs, _ = self._preview_env.reset()
+                self._on_telemetry({"type": "frame", "objects": self._preview_env.frame()})
+
+    def _step_preview(self) -> None:
+        with self._preview_lock:
+            if self._preview_env is None:
+                self._ensure_preview()
+                self._open_preview()
+            action, _ = self.model.predict(self._preview_obs, deterministic=True)
+            self._preview_obs, _, term, trunc, _ = self._preview_env.step(action)
+            self._on_telemetry({"type": "frame", "objects": self._preview_env.frame()})
+            if term or trunc:
+                self._preview_obs, _ = self._preview_env.reset()
+                self._on_telemetry({"type": "frame", "objects": self._preview_env.frame()})
+
+    def _open_preview(self) -> None:
+        if self._preview_open:
+            return
+        self._preview_open = True
         succ = float(np.mean(self._ep_success)) if self._ep_success else 0.0
         self._on_telemetry(
             {
@@ -261,20 +376,11 @@ class _TelemetryCallback(BaseCallback):
                 "success_rate": succ,
             }
         )
-        for _run in range(self.PREVIEW_RUNS):
-            if self._should_stop():
-                break
-            obs, _ = env.reset()
-            self._on_telemetry({"type": "frame", "objects": env.frame()})
-            for _ in range(self.PREVIEW_STEPS):
-                if self._should_stop():
-                    break
-                action, _ = self.model.predict(obs, deterministic=True)
-                obs, _, term, trunc, _ = env.step(action)
-                self._on_telemetry({"type": "frame", "objects": env.frame()})
-                if term or trunc:
-                    break
-            # Next try starts immediately — no sleep, no preview_end between runs.
+
+    def _close_preview(self) -> None:
+        if not self._preview_open:
+            return
+        self._preview_open = False
         self._on_telemetry({"type": "preview_end", "episode": int(self._episode_count)})
 
 

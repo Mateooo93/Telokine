@@ -12,6 +12,21 @@ const TRAIN_URL = 'ws://localhost:8000/ws/train'
 let ws: WebSocket | null = null
 let connecting: Promise<void> | null = null
 let currentModelId: string | null = null
+let pendingFrame: FrameObject[] | null = null
+let frameRaf = 0
+
+function flushFrame() {
+  frameRaf = 0
+  if (!pendingFrame) return
+  useRunStore.getState().setTransforms(pendingFrame)
+  pendingFrame = null
+}
+
+function scheduleFrame(objects: FrameObject[]) {
+  pendingFrame = objects
+  if (frameRaf) return
+  frameRaf = requestAnimationFrame(flushFrame)
+}
 
 function handleMessage(ev: MessageEvent) {
   let msg: { type: string } & Record<string, unknown>
@@ -48,15 +63,15 @@ function handleMessage(ev: MessageEvent) {
       train.onDevice(String(msg.device ?? 'cpu'))
       break
     case 'preview':
-      // A checkpoint playback is starting — label which "try" we're watching.
+      if (!run.running) run.setRunning(true)
       train.onPreview((msg.episode as number) ?? null)
       break
     case 'preview_end':
       train.onPreview(null)
       break
     case 'frame':
-      // Policy preview — mirror it in the viewport.
-      run.setTransforms(msg.objects as FrameObject[])
+      if (!run.running) run.setRunning(true)
+      scheduleFrame(msg.objects as FrameObject[])
       break
     case 'done':
       // Trained policy saved. Remember its name so Run can use it.
@@ -77,6 +92,9 @@ function handleMessage(ev: MessageEvent) {
 function handleClose() {
   ws = null
   connecting = null
+  if (frameRaf) cancelAnimationFrame(frameRaf)
+  frameRaf = 0
+  pendingFrame = null
   const s = useTrainingStore.getState()
   if (s.status === 'training') s.setError('Connection to the training backend was lost.')
   const r = useRunStore.getState()

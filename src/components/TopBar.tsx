@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { isGitHubPages } from '../lib/runtime'
 import { useSceneStore } from '../store/useSceneStore'
 import { useRunStore } from '../store/useRunStore'
@@ -9,8 +10,11 @@ import { startTrain } from '../net/trainSocket'
 import { stopTraining } from '../net/trainingControl'
 import { serializeScene } from '../viewport/types'
 import { rewardPayload, useProgramStore } from '../store/useProgramStore'
+import { TrainHint, useTrainHintDismissed } from './TrainHint'
 
 export function TopBar() {
+  const trainBtnRef = useRef<HTMLButtonElement>(null)
+  const [hintDismissed, dismissHint] = useTrainHintDismissed()
   const running = useRunStore((s) => s.running)
   const runError = useRunStore((s) => s.error)
   const objects = useSceneStore((s) => s.objects)
@@ -55,6 +59,7 @@ export function TopBar() {
   }
 
   const handleTrain = () => {
+    dismissHint()
     if (training) {
       stopTraining()
       return
@@ -72,6 +77,7 @@ export function TopBar() {
   }
 
   const handleSimulateTrain = () => {
+    dismissHint()
     if (training) {
       stopTraining()
       return
@@ -148,7 +154,8 @@ export function TopBar() {
       </button>
       {onPages ? (
         <button
-          className={`btn primary ${training ? 'stop' : ''}`}
+          ref={trainBtnRef}
+          className={`btn primary train-cta ${training ? 'stop' : ''}`}
           onClick={handleSimulateTrain}
           disabled={(!hasAgent && !training) || running}
           title="Fake training in the browser — no CPU/GPU, no backend"
@@ -157,13 +164,17 @@ export function TopBar() {
         </button>
       ) : (
         <button
-          className={`btn primary ${training ? 'stop' : ''}`}
+          ref={trainBtnRef}
+          className={`btn primary train-cta ${training ? 'stop' : ''}`}
           onClick={handleTrain}
           disabled={(!hasAgent && !training) || running}
           title={hasAgent ? 'Train the agent with reinforcement learning' : 'Add a Cube (agent) to train'}
         >
           {training ? '■ Stop' : 'Train'}
         </button>
+      )}
+      {!hintDismissed && !training && !running && hasAgent && (
+        <TrainHint anchorRef={trainBtnRef} onPages={onPages} onDismiss={dismissHint} />
       )}
     </div>
   )

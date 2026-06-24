@@ -107,7 +107,7 @@ export function rewardPayload(blocks: ProgramBlock[]) {
 }
 
 export const useProgramStore = create<ProgramState>((set) => ({
-  ...reachTemplate(),
+  ...uprightTemplate(),
   totalTimesteps: 150_000,
   episodeLength: 250,
   actionPower: 1,

@@ -118,6 +118,71 @@ button {
   flex: 1;
 }
 
+.train-cta {
+  position: relative;
+  z-index: 12;
+}
+
+.train-hint-popover {
+  position: fixed;
+  z-index: 2000;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: auto;
+  animation: hint-bob 1.4s ease-in-out infinite;
+}
+
+.train-hint-arrow {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--accent);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.train-hint-card {
+  margin-top: 4px;
+  min-width: 220px;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-dark);
+  border-radius: 8px;
+  background: rgba(15, 18, 22, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.train-hint-card b {
+  display: block;
+  color: var(--accent);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.train-hint-card p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.train-hint-card em {
+  color: var(--text);
+  font-style: normal;
+  font-weight: 600;
+}
+
+@keyframes hint-bob {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0);
+  }
+  50% {
+    transform: translateX(-50%) translateY(-6px);
+  }
+}
+
 .btn {
   min-height: 30px;
   border: 1px solid var(--line);

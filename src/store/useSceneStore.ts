@@ -61,10 +61,7 @@ interface SceneState {
   loadBuild: () => boolean
 }
 
-const INITIAL_SCENE: SceneObject[] = [
-  createObject('cube', [0, 0.5, 0]),
-  createObject('target', [4, 0.5, 0]),
-]
+const INITIAL_SCENE: SceneObject[] = [...walkerTemplate(), createObject('target', [4, 0.5, 0])]
 
 const BUILD_STORAGE_KEY = 'telokine-build-v1'
 
