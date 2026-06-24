@@ -1,8 +1,9 @@
 # Telokine
 
-in this project you can uild 3d agents using the simple playground i made, this is interesting if you want to learn about reenforcement training without having to know how to code.
+in this project you can uild 3d agents using the simple playground i made, this is interesting if you want to learn about AI reenforcement learning without having to know how to code.
 multiple features are available aswell as a tutorial of you need help! Have fun!
 
+This was coded in python by me and with the help of AI for the training/CUDA part which i didn't really know how to do (:
 demo (ui only): https://mateooo93.github.io/Telokine/  
 code: https://github.com/Mateooo93/Telokine
 
