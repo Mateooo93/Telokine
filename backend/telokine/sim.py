@@ -322,19 +322,30 @@ def build_mjcf(scene: dict, lift_agent: bool = True) -> str:
                 _quat_conj(wquat),
                 (float(anchor[0]) - wpos_t[0], float(anchor[1]) - wpos_t[1], float(anchor[2]) - wpos_t[2]),
             )
+            is_motor = (
+                conn.get("type") == "motor"
+                and conn.get("controlMode", "torque") != "passive"
+                and jtype != "ball"
+            )
+            strength = max(0.2, float(conn.get("motorStrength", 2.5)))
             jattrs = {"name": f"j_{oid}", "type": jtype, "pos": _v3(j_pos)}
             if jtype != "ball":
                 j_axis = _normalize3(_quat_rot(_quat_conj(wquat), (float(axis[0]), float(axis[1]), float(axis[2]))))
                 jattrs["axis"] = _v3(j_axis)
+            # Give actuated joints damping + armature so a motor behaves like a
+            # real, controllable motor that can be driven AND reversed smoothly in
+            # BOTH directions, instead of a frictionless flywheel that just spins
+            # up one way and never settles. Damping sets a sane top speed; armature
+            # keeps the strong actuator numerically stable.
+            if jtype in ("hinge", "slide"):
+                jattrs["armature"] = _f(0.02)
+                jattrs["damping"] = _f(strength * 1.5 if is_motor else 0.4)
             ET.SubElement(body, "joint", jattrs)
             has_dof = True
-            if (
-                conn.get("type") == "motor"
-                and conn.get("controlMode", "torque") != "passive"
-                and jtype != "ball"
-            ):
-                gear = max(0.2, float(conn.get("motorStrength", 2.5))) * 12.0
-                actuators.append((f"j_{oid}", gear))
+            if is_motor:
+                # Bidirectional torque source: ctrl in [-1, 1] -> -/+ gear N·m, so
+                # the policy can spin the joint either way.
+                actuators.append((f"j_{oid}", strength * 6.0))
 
         moving = parent_moving or has_dof
         _build_geom(body, obj)

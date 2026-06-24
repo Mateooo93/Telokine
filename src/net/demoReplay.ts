@@ -61,16 +61,15 @@ export async function replayWalkerTraining(
   }
 
   let telemIdx = 0
-  const t0 = performance.now()
 
   try {
+    // Play frames at a steady cadence rather than matching their recorded
+    // wall-clock timestamps. The capture's timestamps contain long gaps (the old
+    // pipeline produced no frames during PPO's optimization phases), and pacing
+    // to them reproduced those gaps as on-screen freezes. Telemetry is still
+    // flushed against each frame's capture time so the graph stays in sync.
     for (const frame of recording.frames) {
       if (shouldAbort()) break
-
-      const targetMs = frame.t * 1000
-      while (performance.now() - t0 < targetMs && !shouldAbort()) {
-        await sleep(8)
-      }
 
       run.setTransforms(frame.objects)
 
@@ -87,6 +86,8 @@ export async function replayWalkerTraining(
         })
         telemIdx += 1
       }
+
+      await sleep(FRAME_MS)
     }
 
     while (telemIdx < recording.telemetry.length) {

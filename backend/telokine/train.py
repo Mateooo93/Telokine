@@ -12,6 +12,7 @@ reward graph climbing and the cube getting better at reaching the target.
 """
 from __future__ import annotations
 
+import copy
 import os
 import time
 import functools
@@ -106,12 +107,21 @@ PREVIEW_DT = 1.0 / PREVIEW_FPS
 
 
 class _LivePreview:
-    """Viewport preview at a fixed rate.
+    """Smooth, continuously-running viewport preview of the learning policy.
 
-    Loading uses a tiny hold-pose thread (no policy). During ``model.learn`` the
-    policy is stepped from the SB3 callback on the training thread only — calling
-    ``model.predict`` from a background thread while PPO backprop runs corrupts
-    torch and can crash with errors like ``zip() argument 2 is shorter...``.
+    The preview runs on its OWN background thread at a fixed frame rate so the
+    viewport keeps moving no matter what the training loop is doing. This is the
+    key to a non-janky preview: PPO alternates between collecting rollouts (the
+    SB3 callback fires) and optimizing the network (``model.train``, which can
+    take seconds on CPU and during which the callback does NOT fire). Driving the
+    preview from the callback therefore froze the cube during every optimization
+    phase.
+
+    Crucially the preview steps an *independent* CPU copy of the policy, not the
+    live ``model``. Calling ``predict`` on the shared model from another thread
+    while PPO backprop mutates it corrupts torch; a separate module has its own
+    tensors and is completely safe. The copy's weights are refreshed between
+    rollouts via :meth:`sync` so the viewer still watches the agent improve.
     """
 
     def __init__(
@@ -127,10 +137,23 @@ class _LivePreview:
         self._should_stop = should_stop
         self._env = None
         self._obs: Any = None
-        self._model: Any = None
-        self._last_tick = 0.0
+        # Independent inference copy of the policy. New weights are NOT applied
+        # mid-episode (that makes the agent visibly change behaviour partway
+        # through a run); instead we stash the best snapshot seen so far and only
+        # adopt it at the next episode boundary. "Best" = highest mean reward,
+        # most recent on ties — i.e. the best "try" so far.
+        self._infer_policy: Any = None
+        self._policy_lock = threading.Lock()
+        self._best_state: Any = None
+        self._best_reward = float("-inf")
+        self._best_version = 0
+        self._loaded_version = -1
+        # Hold-pose thread used only while the vec-env is still spawning.
         self._hold_stop = threading.Event()
         self._hold_thread: threading.Thread | None = None
+        # The live preview thread that runs from the moment a policy is set.
+        self._preview_stop = threading.Event()
+        self._preview_thread: threading.Thread | None = None
 
     def begin_loading(self) -> None:
         from telokine.env import CubeAgentEnv
@@ -157,27 +180,90 @@ class _LivePreview:
             self._hold_thread.join(timeout=1.0)
             self._hold_thread = None
 
+    @staticmethod
+    def _clone_policy(model: Any) -> Any:
+        """A standalone CPU copy of the policy, safe to run from another thread."""
+        policy = copy.deepcopy(model.policy).to("cpu")
+        policy.set_training_mode(False)
+        return policy
+
     def set_policy(self, model: Any) -> None:
+        """Switch from the loading hold-pose to a live, self-driving preview."""
         self._stop_loading()
-        self._model = model
+        try:
+            self._infer_policy = self._clone_policy(model)
+        except Exception:  # noqa: BLE001 — fall back to a static pose, never crash training
+            self._infer_policy = None
+            return
+        self._preview_stop.clear()
+        self._preview_thread = threading.Thread(target=self._preview_loop, daemon=True)
+        self._preview_thread.start()
+
+    def sync(self, model: Any, reward: float) -> None:
+        """Offer a new policy snapshot (with its mean reward) to the preview.
+
+        Called from the training thread between rollouts (no backward pass in
+        flight), so reading ``state_dict`` is safe. We only keep the best one;
+        the preview adopts it at the next episode boundary, never mid-run.
+        """
+        if self._infer_policy is None:
+            return
+        try:
+            snapshot = {
+                k: v.detach().to("cpu").clone()
+                for k, v in model.policy.state_dict().items()
+            }
+        except Exception:  # noqa: BLE001
+            return
+        with self._policy_lock:
+            if self._best_state is None or reward >= self._best_reward:
+                self._best_state = snapshot
+                self._best_reward = reward
+                self._best_version += 1
+
+    def _preview_loop(self) -> None:
+        # Adopt whatever best snapshot exists before the first try begins.
+        self._load_latest_best()
+        while not self._preview_stop.is_set() and not self._should_stop():
+            t0 = time.monotonic()
+            try:
+                action, _ = self._infer_policy.predict(self._obs, deterministic=True)
+                action = np.asarray(action, dtype=np.float64).reshape(-1)
+                self._obs, _, term, trunc, _ = self._env.step(action)
+                self._emit({"type": "frame", "objects": self._env.frame()})
+                if term or trunc:
+                    # The try is finished. ONLY now do we reset and upgrade to the
+                    # newest best policy, so a run never changes behaviour midway.
+                    self._obs, _ = self._env.reset()
+                    self._emit({"type": "frame", "objects": self._env.frame()})
+                    self._load_latest_best()
+            except Exception:  # noqa: BLE001 — a preview hiccup must never kill training
+                pass
+            elapsed = time.monotonic() - t0
+            if elapsed < PREVIEW_DT:
+                time.sleep(PREVIEW_DT - elapsed)
+
+    def _load_latest_best(self) -> None:
+        """Swap the inference policy to the best snapshot (episode boundary only)."""
+        with self._policy_lock:
+            state = self._best_state
+            version = self._best_version
+        if state is None or version == self._loaded_version or self._infer_policy is None:
+            return
+        try:
+            self._infer_policy.load_state_dict(state)
+            self._loaded_version = version
+        except Exception:  # noqa: BLE001
+            pass
 
     def tick(self) -> None:
-        """Advance the visible policy preview (training thread only)."""
-        if self._env is None or self._model is None:
-            return
-        now = time.monotonic()
-        if now - self._last_tick < PREVIEW_DT:
-            return
-        self._last_tick = now
-        action, _ = self._model.predict(self._obs, deterministic=True)
-        action = np.asarray(action, dtype=np.float64).reshape(-1)
-        self._obs, _, term, trunc, _ = self._env.step(action)
-        self._emit({"type": "frame", "objects": self._env.frame()})
-        if term or trunc:
-            self._obs, _ = self._env.reset()
-            self._emit({"type": "frame", "objects": self._env.frame()})
+        """No-op: the preview now advances on its own thread (kept for the API)."""
 
     def close(self) -> None:
+        self._preview_stop.set()
+        if self._preview_thread is not None:
+            self._preview_thread.join(timeout=1.0)
+            self._preview_thread = None
         self._stop_loading()
 
 
@@ -300,9 +386,19 @@ class _TelemetryCallback(BaseCallback):
         self._on_telemetry({"type": "started", "total_timesteps": self.total_timesteps})
         self._preview.set_policy(self.model)
         self._open_preview()
-        self._preview.tick()
+
+    def _on_rollout_end(self) -> None:
+        # Offer the just-collected weights (tagged with their mean reward) to the
+        # self-driving preview. It will adopt the best one at the next episode
+        # boundary, so the viewer always watches the best "try" so far play out
+        # in full — never a run that mutates mid-flight.
+        mean_r = float(np.mean(self._ep_rewards)) if self._ep_rewards else float("-inf")
+        self._preview.sync(self.model, mean_r)
 
     def _on_training_end(self) -> None:
+        # Stop the preview thread BEFORE signalling the end, so no stray frames
+        # arrive after preview_end (which would re-flicker the viewport on).
+        self._preview.close()
         self._close_preview()
 
     def _on_step(self) -> bool:
@@ -317,8 +413,6 @@ class _TelemetryCallback(BaseCallback):
                 self._episode_count += 1
                 self._ep_success.append(1.0 if info.get("reached") else 0.0)
                 self._ep_oob.append(float(info.get("out_of_bounds_metric", 0.0)))
-
-        self._preview.tick()
 
         if self.n_calls % self.rollout_steps == 0:
             self._rollouts_seen += 1
