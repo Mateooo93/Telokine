@@ -1,7 +1,7 @@
 # Telokine
 
-train a robot without writing code. build 3d agents using the simple playground i made, this is interesting if you want to learn about reenforcement training without having to know how to code.
-multiple features are avbailable aswell as a tutorial of you need help! Have fun!
+in this project you can uild 3d agents using the simple playground i made, this is interesting if you want to learn about reenforcement training without having to know how to code.
+multiple features are available aswell as a tutorial of you need help! Have fun!
 
 demo (ui only): https://mateooo93.github.io/Telokine/  
 code: https://github.com/Mateooo93/Telokine
